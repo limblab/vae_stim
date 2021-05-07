@@ -1,0 +1,1 @@
+#WARNING: This file is used by getLoadCellOffsets and modified by appendLoadCellOffsets. DO NOT modify this file outside of those functions. Offsets should start from line 2. P.S. Windows Notepad doesn't read newline characters.
