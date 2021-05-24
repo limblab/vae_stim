@@ -13,14 +13,14 @@ function [f] = plotStimEffectVsStimPD(amp_input_data, amp_output_data, pd_table)
     subplot_counter = 1;
     ax = [];
     max_edge = pi;
-    for i_act = 1:numel(amp_input_data.acts_test)
+    for i_act = 1:numel(amp_input_data.direct_acts_test)
         for i_amp = 1:numel(amp_input_data.amps_test)
-            ax(end+1) = subplot(numel(amp_input_data.acts_test),numel(amp_input_data.amps_test),subplot_counter); hold on;
-            act_func_mask = strcmpi(amp_output_data.act_func,amp_input_data.acts_test{i_act})==1;
+            ax(end+1) = subplot(numel(amp_input_data.direct_acts_test),numel(amp_input_data.amps_test),subplot_counter); hold on;
+            act_func_mask = strcmpi(amp_output_data.act_func,amp_input_data.direct_acts_test{i_act})==1;
             amp_mask = amp_output_data.amp_list == amp_input_data.amps_test(i_amp); 
             
-            neigh_mask = amp_output_data.neighbor_similarity > prctile(amp_output_data.neighbor_similarity,75);
-            mask = act_func_mask & amp_mask & neigh_mask;
+%             neigh_mask = amp_output_data.neighbor_similarity > prctile(amp_output_data.neighbor_similarity,75);
+            mask = act_func_mask & amp_mask; % & neigh_mask;
             
             
             h=histogram(rad2deg(angleDiff(stim_PD(mask),stim_ang(mask),1,0)),bin_edges,'Normalization','Probability');

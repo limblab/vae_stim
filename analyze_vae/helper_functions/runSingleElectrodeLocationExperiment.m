@@ -18,7 +18,7 @@ function [output_data] = runSingleElectrodeLocationExperiment(input_data)
 % n_locs : number of stimulation locations to test
 % amps_test : amplitude(s) of stimulation to test
 % freqs_test : frequenc(ies) of stimulation to test
-% acts_test : activation functions to test
+% direct_acts_test : activation functions to test
 % locs : location of neurons
 % dec : decoder from firing rate to hand velocity
 % bias : decoder bias;
@@ -36,7 +36,7 @@ function [output_data] = runSingleElectrodeLocationExperiment(input_data)
     % for each amplitude, frequency, and activation function, location,
     % movement, get stimulation effect
     % initialize output matrices for experiment
-    n_out = numel(input_data.acts_test)*numel(input_data.amps_test)*numel(input_data.freqs_test)*input_data.n_moves*input_data.n_locs;
+    n_out = numel(input_data.direct_acts_test)*numel(input_data.amps_test)*numel(input_data.freqs_test)*input_data.n_moves*input_data.n_locs;
     n_bins = ceil(input_data.train_length/input_data.td.bin_size);
     stim_vel = zeros(n_out,n_bins,2);
     base_vel = zeros(size(stim_vel));
@@ -53,9 +53,15 @@ function [output_data] = runSingleElectrodeLocationExperiment(input_data)
     stim_effect_data.bin_size = input_data.td.bin_size;
     stim_effect_data.dec = input_data.dec;
     stim_effect_data.bias = input_data.bias;
+    stim_effect_data.corr_table = input_data.corr_table;
+    stim_effect_data.block_size = input_data.block_size;
+    stim_effect_data.PD = input_data.PD;
+    
     counter = 1;
-    for i_act = 1:numel(input_data.acts_test)
-        stim_effect_data.act_func = input_data.acts_test{i_act};
+    for i_act = 1:numel(input_data.direct_acts_test)
+        stim_effect_data.direct_act_func = input_data.direct_acts_test{i_act};
+        stim_effect_data.trans_act_func = input_data.trans_acts_test{i_act};
+        
         for i_amp = 1:numel(input_data.amps_test)
             stim_effect_data.amp = input_data.amps_test(i_amp);
             for i_freq = 1:numel(input_data.freqs_test)
@@ -87,7 +93,7 @@ function [output_data] = runSingleElectrodeLocationExperiment(input_data)
                         num_pulses_active(counter,:) = sum(stim_effect_temp.is_act,2)';
                         
                         % store relevant parameters for this run
-                        act_func{counter,1} = input_data.acts_test{i_act};
+                        act_func{counter,1} = input_data.direct_acts_test{i_act};
                         amp_list(counter,1) = input_data.amps_test(i_amp);
                         freq_list(counter,1) = input_data.freqs_test(i_freq);
                         move_idx(counter,1) = stim_start_idx(i_move);

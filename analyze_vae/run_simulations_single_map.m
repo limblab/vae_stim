@@ -1,8 +1,8 @@
 %% load file
     pathname = 'D:\Joseph\stimModel';
-    maps_folder_name = 'Han_20160315_maps';
+    maps_folder_name = '';
     td_filename = 'Han_20160315_RW_SmoothKin_50ms.mat';
-    fr_file = 'rates_Han_20160315_RW_sigma2.0_drop93_lambda20_learning1e-05_n-epochs600_n-neurons1600_rate6.0_2021-04-21-194045.csv';
+    fr_file = 'rates_Han_20160315_RW_2021-05-12-210801.csv';
     
     underscore_idx = strfind(fr_file,'_');
     underscore_idx = underscore_idx(find(underscore_idx,1,'last'));
@@ -204,16 +204,18 @@
     
     
 %% build decoder or load one in (Building can take awhile)
-    build_decoder = 0;
+    build_decoder = 1;
     % if loading a decoder, fill these out. Otherwise ignore
     dec_path = 'D:\Joseph\stimModel\decoders'; % no file sep afterwards
     dec_fname = [fr_file(1:end-4), '_dec.mat'];
     
     if(build_decoder==1)
         dec_input_data = [];
-        dec_input_data.lr = 0.00001;
-        dec_input_data.num_iters = 10000;
-        dec_input_data.dropout_rate = 0.93;
+        dec_input_data.lr = 0.001;
+        dec_input_data.num_iters = 5000;
+        % if using previous decoder data
+        dec_input_data.dropout_rate = 0.99;
+%         dec_input_data.bias = bias; dec_input_data.dec = dec;
         
         train_idx = datasample(1:1:size(td.VAE_firing_rates,1),ceil(0.5*size(td.VAE_firing_rates,1)),'Replace',false);
         
@@ -222,6 +224,8 @@
         
         dec_output_data = buildDecoderDropout(dec_input_data);
         dec = dec_output_data.dec; bias = dec_output_data.bias;
+        
+        save([dec_path filesep dec_fname],'dec','bias','train_idx');
     else
         load([dec_path filesep dec_fname]);
     end
@@ -262,66 +266,16 @@
     set(gca,'fontsize',14);
     f.Name = [file_id,'_PD_encoder_decoder_diff'];
     
+%% get correlations across neurons
+
+    corr_table = corr(td.VAE_firing_rates);
+    
+    
+    
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%% run stimulation experiments %%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% Experiment 0: 
-% stimulate and look at effect on hand velocity/position. Make example
-% figures using this code
-    % stimulate at a chosen electrode and visualize spread
-    locs_cort = locs*0.06;
-    trial_idx = 120;
-    move_len_idx = ceil(1.0/td.bin_size);
-    
-    [~,idx] = datasample(1:1:size(locs_cort,1),1);
-    stim_loc = locs_cort(idx,:);
-    
-    stim_in_data = [];
-    stim_in_data.FR = td.VAE_firing_rates(trial_idx:trial_idx+move_len_idx-1,:);
-    stim_in_data.dec = dec; stim_in_data.bias = bias;
-    stim_in_data.act_func = 'model_based_floor';
-    stim_in_data.locs = locs_cort;
-    stim_in_data.stim_loc = stim_loc;
-    stim_in_data.amp = 20;
-    stim_in_data.pulse_bin_idx = reshape(repmat([2:1:move_len_idx],5,1),[],1); % each pulse within a bin is 20 Hz stim.
-    stim_in_data.n_pulses = numel(stim_in_data.pulse_bin_idx);
-    stim_in_data.bin_size = td.bin_size;
-
-    stim_eff = getStimEffect(stim_in_data);
-    num_act = sum(stim_eff.is_act,2);
-    
-    f=figure();
-    pd_map = rad2deg(reshape(pd_table.velPD,map_dim));
-    pd_map(pd_map<0) = pd_map(pd_map<0)+360; % convert to same limits as polarhistogram
-    imagesc(pd_map);
-    colormap(colorcet('C3'));
-    alpha(0.6);
-    b=colorbar;
-    b.Label.String = 'PD (degrees)';
-    b.Label.FontSize = 14;
-    
-    % plot activated neurons, shade by how often they were activated
-    max_act = max(num_act);
-    num_act_map = reshape(num_act,map_dim);
-    color_list = colorcet('L5');
-    color_list = color_list(50:end,:);
-    for x_loc = 1:size(num_act_map,1)
-        for y_loc = 1:size(num_act_map,2)
-            if(num_act_map(x_loc,y_loc) > 0)
-                color_idx = ceil(size(color_list,1)*num_act_map(x_loc,y_loc)/max_act);
-                color_use = color_list(color_idx,:);
-                rectangle('Position',[y_loc-0.5,x_loc-0.5,1,1],'EdgeColor',color_use,'FaceColor','none','linewidth',3);
-            end
-        end
-    end
-    
-    % plot stim location
-    loc_idx = locs(idx,:); 
-    rectangle('Position',[loc_idx(2)-0.5,loc_idx(1)-0.5,1,1],'faceColor','none','EdgeColor','m','linewidth',2);
-    
-    
-%     f.Name = [file_id,'_PD_cortical_map'];
 %% Experiment 1 : 
 % How does the direction of stim effect compare to the PD of the stimulated
 % location during single electrode stimulation?
@@ -338,17 +292,21 @@
     
     amp_input_data = [];
     amp_input_data.amps_test = [15,30,50,100]; % uA
-    amp_input_data.acts_test = {'model_based'};
+    amp_input_data.direct_acts_test = {'model_based_circle_corr'};
+    amp_input_data.trans_acts_test = {'corr_project'};
     amp_input_data.freqs_test = [100]; % Hz
     amp_input_data.train_length = [0.5]; % in s 
 
-    amp_input_data.n_locs = 500;
+    amp_input_data.n_locs = 250;
     amp_input_data.n_moves = 1;
     
     amp_input_data.td = td;
-    amp_input_data.locs = locs*0.06; % block size is 0.06 mm currently.
+    amp_input_data.block_size = 0.06; % mm
+    amp_input_data.locs = locs*amp_input_data.block_size; % block size is 0.06 mm currently.
     amp_input_data.dec = dec;
     amp_input_data.bias = bias;
+    amp_input_data.corr_table = corr_table;
+    amp_input_data.PD = pd_table.velPD;
     
     amp_output_data = runSingleElectrodeLocationExperiment(amp_input_data);
     
@@ -362,47 +320,53 @@
     
     unique_amps = unique(amp_output_data.amp_list);
     color_list = inferno(numel(unique_amps)+1);
-    figure('Position',[681 559 950 420]);
-    for i_amp = 1:numel(unique_amps)
-        amp_mask = amp_output_data.amp_list == unique_amps(i_amp);
-        dist_amp = dist_to_stim(amp_mask,:);
-        was_act = amp_output_data.num_pulses_active(amp_mask,:) > 0;
-        num_act = amp_output_data.num_pulses_active(amp_mask,:);
-        
-        dist_amp= reshape(dist_amp,[],1);
-        was_act = reshape(was_act,[],1);
-        num_act = reshape(num_act,[],1);
-        
-        dist = dist_amp(was_act);
-        dist = repelem(dist,num_act(was_act));
-        spike_counts = histcounts(dist,bin_edges);
-        spike_counts = spike_counts;
-        num_neurons = histcounts(dist_amp,bin_edges);
-        
-        subplot(1,2,1); hold on;
-        x_data = 1000*(bin_edges(1:end-1)+mode(diff(bin_edges))/2);
-        plot(x_data,spike_counts./num_neurons/(amp_input_data.train_length*amp_input_data.freqs_test),...
-            'o','markersize',8,'linewidth',1.5,'color',color_list(i_amp,:));
-        % plot activation function for this amplitude
-        [a_val,b_val] = getModelBasedActivationParameters(unique_amps(i_amp));
-        plot(x_data, 1-1./(1+exp(-a_val*(x_data - b_val))),'--','linewidth',1.5,'color',color_list(i_amp,:));
-        
-        subplot(1,2,2); hold on;
-        plot(1000*(bin_edges(1:end-1)+mode(diff(bin_edges))/2),spike_counts/size(amp_output_data.amp_list,1),'o','markersize',8,'linewidth',1.5,'color',color_list(i_amp,:));
-    end
-    subplot(1,2,1);
-    xlabel('Distance from stim (\mum)');
-    ylabel('Proportion of activated neurons');
-    formatForLee(gcf);
-    set(gca,'fontsize',14);
-    xlim([0,2000]);
+%     figure('Position',[681 559 950 420]);
+%     for i_amp = 1:numel(unique_amps)
+%         amp_mask = amp_output_data.amp_list == unique_amps(i_amp);
+%         dist_amp = dist_to_stim(amp_mask,:);
+%         was_act = amp_output_data.num_pulses_active(amp_mask,:) > 0;
+%         num_act = amp_output_data.num_pulses_active(amp_mask,:);
+%         
+%         dist_amp= reshape(dist_amp,[],1);
+%         was_act = reshape(was_act,[],1);
+%         num_act = reshape(num_act,[],1);
+%         
+%         dist = dist_amp(was_act);
+%         dist = repelem(dist,num_act(was_act));
+%         spike_counts = histcounts(dist,bin_edges);
+%         spike_counts = spike_counts;
+%         num_neurons = histcounts(dist_amp,bin_edges);
+%         
+%         subplot(1,2,1); hold on;
+%         x_data = 1000*(bin_edges(1:end-1)+mode(diff(bin_edges))/2);
+%         plot(x_data,spike_counts./num_neurons/(amp_input_data.train_length*amp_input_data.freqs_test),...
+%             'o','markersize',8,'linewidth',1.5,'color',color_list(i_amp,:));
+%         % plot activation function for this amplitude
+%         [a_val,b_val] = getModelBasedActivationParameters(unique_amps(i_amp));
+%         plot(x_data, 1-1./(1+exp(-a_val*(x_data - b_val))),'--','linewidth',1.5,'color',color_list(i_amp,:));
+%         
+%         subplot(1,2,2); hold on;
+%         plot(1000*(bin_edges(1:end-1)+mode(diff(bin_edges))/2),spike_counts/size(amp_output_data.amp_list,1),'o','markersize',8,'linewidth',1.5,'color',color_list(i_amp,:));
+%     end
+%     subplot(1,2,1);
+%     xlabel('Distance from stim (\mum)');
+%     ylabel('Proportion of activated neurons');
+%     formatForLee(gcf);
+%     set(gca,'fontsize',14);
+%     xlim([0,2000]);
+%     
+%     subplot(1,2,2);
+%     xlabel('Distance from stim (\mum)');
+%     ylabel('Number of spikes per train');
+%     formatForLee(gcf);
+%     set(gca,'fontsize',14);
+%     xlim([0,2000]);
     
-    subplot(1,2,2);
-    xlabel('Distance from stim (\mum)');
-    ylabel('Number of spikes per train');
-    formatForLee(gcf);
-    set(gca,'fontsize',14);
-    xlim([0,2000]);
+% look at how effect of stimulation compares to PDs of stimulation location
+
+    f=plotStimEffectVsStimPD(amp_input_data, amp_output_data, pd_table);
+    f.Name = [file_id,'_activatedPop_vs_stimEffect'];
+    
 %% look at how activated population compares to stimulation location PD
     % compare across amplitudes and activation functions. 
         
@@ -431,13 +395,8 @@
     
     amp_output_data.neighbor_similarity = getNeighborsSimilarity(sim_input_data);
     
-    plotNeighborSimilarityVsActivatedSimilarity(amp_input_data, amp_output_data, pd_table.velPD);
-%     plotStimEffectVsNeighborSimilarity(amp_input_data,amp_output_data,pd_table);
-
-%% look at how effect of stimulation compares to PDs of stimulation location
-
-    f=plotStimEffectVsStimPD(amp_input_data, amp_output_data, pd_table);
-    f.Name = [file_id,'_activatedPop_vs_stimEffect_75thPrctileSim'];
+%     plotNeighborSimilarityVsActivatedSimilarity(amp_input_data, amp_output_data, pd_table.velPD);
+    plotStimEffectVsNeighborSimilarity(amp_input_data,amp_output_data,pd_table);
    
     
 %% Experiment 2 : Classify movements in one of two directions (can rotate axis)

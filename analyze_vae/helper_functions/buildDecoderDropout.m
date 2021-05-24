@@ -12,8 +12,15 @@ function [ output_data ] = buildDecoderDropout( input_data )
         input_data.fr = input_data.fr';
     end
 
-    dec = rand(2,size(input_data.fr,1))-0.5;
-    bias = [0;0];
+    if(isfield(input_data,'dec') && isfield(input_data,'bias'))
+        dec = input_data.dec';
+        bias = input_data.bias';
+        dec = dec/(1-input_data.dropout_rate);
+        warning('loaded dec and bias before training');
+    else
+        dec = rand(2,size(input_data.fr,1))-0.5;
+        bias = [0;0];
+    end
 
     vaf_list_drop = zeros(input_data.num_iters,2);
     vaf_list_mdl = zeros(input_data.num_iters,2);
@@ -33,10 +40,10 @@ function [ output_data ] = buildDecoderDropout( input_data )
         bias = bias - input_data.lr*d_bias;
         dec = dec - input_data.lr*d_dec';
 
-        if(mod(i_iter,500)==0)
+        if(mod(i_iter,100)==0)
             vaf_list_drop(i_iter,:) = compute_vaf(input_data.hand_vel,vel_pred');
             vaf_list_mdl(i_iter,:) = compute_vaf(input_data.hand_vel,((dec*input_data.fr)*(1-input_data.dropout_rate) + bias)');
-            disp([i_iter/input_data.num_iters, vaf_list_mdl(i_iter,:)])
+            disp([i_iter/input_data.num_iters, vaf_list_drop(i_iter,:), vaf_list_mdl(i_iter,:)])
         end
     end
 

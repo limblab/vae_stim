@@ -7,19 +7,18 @@ function [f] = plotStimEffectVsNeighborSimilarity(amp_input_data, amp_output_dat
     stim_vel = squeeze(mean(amp_output_data.stim_vel,2));
     stim_ang = atan2(stim_vel(:,2),stim_vel(:,1));
     
+    f=figure('Position',[681 559 1144 420]);
+
     % get colormap
     color_list = colormap(colorcet('C3'));
     
-    
-    f=figure('Position',[681 559 1144 420]);
-
     subplot_counter = 1;
     ax = [];
     max_edge = pi;
-    for i_act = 1:numel(amp_input_data.acts_test)
+    for i_act = 1:numel(amp_input_data.direct_acts_test)
         for i_amp = 1:numel(amp_input_data.amps_test)
-            ax(end+1) = subplot(numel(amp_input_data.acts_test),numel(amp_input_data.amps_test),subplot_counter); hold on;
-            act_func_mask = strcmpi(amp_output_data.act_func,amp_input_data.acts_test{i_act})==1;
+            ax(end+1) = subplot(numel(amp_input_data.direct_acts_test),numel(amp_input_data.amps_test),subplot_counter); hold on;
+            act_func_mask = strcmpi(amp_output_data.act_func,amp_input_data.direct_acts_test{i_act})==1;
             amp_mask = amp_output_data.amp_list == amp_input_data.amps_test(i_amp); 
             mask = act_func_mask & amp_mask;
             
