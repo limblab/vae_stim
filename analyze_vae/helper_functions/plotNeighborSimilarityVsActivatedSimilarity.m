@@ -12,11 +12,11 @@ function [f] = plotNeighborSimilarityVsActivatedSimilarity(amp_input_data, amp_o
     % get colormap
     color_list = colormap(colorcet('C3'));
     ax_list = [];
-    for i_act = 1:numel(amp_input_data.acts_test)
+    for i_act = 1:numel(amp_input_data.direct_acts_test)
         for i_amp = 1:numel(amp_input_data.amps_test)
-            ax_list(end+1)=subplot(numel(amp_input_data.acts_test),numel(amp_input_data.amps_test),subplot_counter); hold on;
+            ax_list(end+1)=subplot(numel(amp_input_data.direct_acts_test),numel(amp_input_data.amps_test),subplot_counter); hold on;
             
-            act_func_mask = strcmpi(amp_output_data.act_func,amp_input_data.acts_test{i_act})==1;
+            act_func_mask = strcmpi(amp_output_data.act_func,amp_input_data.direct_acts_test{i_act})==1;
             amp_mask = amp_output_data.amp_list == amp_input_data.amps_test(i_amp);
             mask = act_func_mask & amp_mask;
             

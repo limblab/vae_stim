@@ -26,10 +26,10 @@ function [f] = plotActivatedPopulationVsStimPD(amp_input_data, amp_output_data, 
         
     % make plot
     f=figure();
-    for i_act = 1:numel(amp_input_data.acts_test)
-        subplot(1,numel(amp_input_data.acts_test),i_act); hold on;
+    for i_act = 1:numel(amp_input_data.direct_acts_test)
+        subplot(1,numel(amp_input_data.direct_acts_test),i_act); hold on;
         for i_amp = 1:numel(amp_input_data.amps_test)
-            act_func_mask = strcmpi(amp_output_data.act_func,amp_input_data.acts_test{i_act})==1;
+            act_func_mask = strcmpi(amp_output_data.act_func,amp_input_data.direct_acts_test{i_act})==1;
             amp_mask = amp_output_data.amp_list == amp_input_data.amps_test(i_amp);
             neigh_mask = neighbor_similarity > prctile(neighbor_similarity,90);
             mask = act_func_mask & amp_mask & neigh_mask;
