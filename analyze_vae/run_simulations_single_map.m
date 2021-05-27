@@ -1,7 +1,7 @@
 %% load file
     pathname = 'D:\Joseph\stimModel';
     maps_folder_name = '';
-    td_filename = 'Han_20160315_RW_SmoothKin_50ms.mat';
+    td_filename = 'Han_20160315_RW_smoothKin_jointAngjointVel_50ms_td.mat';
     fr_file = 'rates_Han_20160315_RW_2021-05-12-210801.csv';
     
     underscore_idx = strfind(fr_file,'_');
@@ -204,10 +204,10 @@
     
     
 %% build decoder or load one in (Building can take awhile)
-    build_decoder = 1;
+    build_decoder = 0;
     % if loading a decoder, fill these out. Otherwise ignore
     dec_path = 'D:\Joseph\stimModel\decoders'; % no file sep afterwards
-    dec_fname = [fr_file(1:end-4), '_dec.mat'];
+    dec_fname = [fr_file(1:end-4), '_joint_ang_dec.mat'];
     
     if(build_decoder==1)
         dec_input_data = [];
@@ -215,12 +215,12 @@
         dec_input_data.num_iters = 5000;
         % if using previous decoder data
         dec_input_data.dropout_rate = 0.99;
-%         dec_input_data.bias = bias; dec_input_data.dec = dec;
+        dec_input_data.bias = bias; dec_input_data.dec = dec;
         
         train_idx = datasample(1:1:size(td.VAE_firing_rates,1),ceil(0.5*size(td.VAE_firing_rates,1)),'Replace',false);
         
         dec_input_data.fr = td.VAE_firing_rates(train_idx,:)';
-        dec_input_data.hand_vel = td.vel(train_idx,:);
+        dec_input_data.hand_vel = td.joint_vel(train_idx,:);
         
         dec_output_data = buildDecoderDropout(dec_input_data);
         dec = dec_output_data.dec; bias = dec_output_data.bias;
@@ -231,7 +231,7 @@
     end
     
         td.pred_vel = predictData(td.VAE_firing_rates, dec, bias);
-    vaf_pred = compute_vaf(td.vel, td.pred_vel)
+    vaf_pred = compute_vaf(td.joint_vel, td.pred_vel)
 %% use decoder to get predicted hand velocities
     f=figure();
     ax1=subplot(1,2,1); hold on;
@@ -270,11 +270,75 @@
 
     corr_table = corr(td.VAE_firing_rates);
     
+  
+  %%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%% run experiment with open sim %%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    % Independent Variables: Amplitude, Activation Function, Frequency. 
+
+    % Dependent Variables : Direction and magnitude of stim effect,
+    % measured from predicted hand velocity from the linear decoder
+
+    % Will do simulations for multiple locations, can then sanity check
+    % with a neighborhood metric.
+    % Will also do simulations for multiple hand kinematics, which will
+    % affect firing rate of neurons, and thus the effect of stim.
+        
+    amp_input_data = [];
+    amp_input_data.amps_test = [20,40]; % uA
+    amp_input_data.direct_acts_test = {'model_based_circle_corr'};
+    amp_input_data.dir_act_fact = [0.5];    
+    
+    amp_input_data.trans_acts_test = {'corr_project'};
+
+    amp_input_data.freqs_test = [100]; % Hz
+    amp_input_data.train_length = [0.5]; % in s 
+
+    amp_input_data.n_locs = 150;
+    amp_input_data.n_moves = 1;
+    
+    amp_input_data.td = td;
+    amp_input_data.block_size = 0.06; % mm
+    amp_input_data.locs = locs*amp_input_data.block_size; % block size is 0.06 mm currently.
+    amp_input_data.dec = dec;
+    amp_input_data.bias = bias;
+    amp_input_data.corr_table = corr_table;
+    amp_input_data.PD = pd_table.velPD;
+    
+    opensim_data.data_dir = 'D:\Joseph\stimModel\opensim_data';
+    opensim_data.settings_path = 'C:\Users\jts3256\Desktop\Lab\GIT\monkeyArmModel';
+    opensim_data.settings_fname = 'matlab_pointKin_settings.xml';
+    opensim_data.mot_path = 'D:\Joseph\stimModel\opensim_data\IKResults';
+    opensim_data.mot_name = 'test.mot';
+    opensim_data.joint_names = td.joint_names;
+    opensim_data.in_deg = 1;
+    
+    amp_input_data.do_opensim = 1;
+    
+    amp_output_data = runVAEOpenSimExperiment(amp_input_data,opensim_data);
+    
+    % extract hand and elbow vel for each experiment
+    [amp_output_data.hand_vel_no, amp_output_data.elbow_vel_no] = getHandElbowVel(amp_output_data.point_kin_no_stim);
+    [amp_output_data.hand_vel_stim, amp_output_data.elbow_vel_stim] = getHandElbowVel(amp_output_data.point_kin_stim);
     
     
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%% run stimulation experiments %%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% plot hand and elbow PD vs stim loc PD (scatter plot, histogram of absolute diff)
+    
+    f=plotHandVelElbowVelVsStimPD(amp_input_data, amp_output_data, pd_table);
+    f.Name = [file_id,'_activatedPop_vs_stimEffect'];
+    
+    
+
+%% plot hand dir vs. elbow dir (scatter plot, histogram of absolute diff)
+    
+    
+    
+    
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%% run experiments looking only at hand with appropriate decoder %%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Experiment 1 : 
 % How does the direction of stim effect compare to the PD of the stimulated
@@ -291,17 +355,17 @@
     % affect firing rate of neurons, and thus the effect of stim.
     
     amp_input_data = [];
-    amp_input_data.amps_test = [15,30,50,100]; % uA
-    amp_input_data.direct_acts_test = {'model_based_circle_corr'};
-    amp_input_data.trans_acts_test = {'corr_project'};
+    amp_input_data.amps_test = [15]; % uA
+    amp_input_data.direct_acts_test = {'model_based_floor'};
+    amp_input_data.trans_acts_test = {''};
     amp_input_data.freqs_test = [100]; % Hz
     amp_input_data.train_length = [0.5]; % in s 
 
-    amp_input_data.n_locs = 250;
-    amp_input_data.n_moves = 1;
+    amp_input_data.n_locs = 200;
+    amp_input_data.n_moves = 10;
     
     amp_input_data.td = td;
-    amp_input_data.block_size = 0.06; % mm
+    amp_input_data.block_size = 0.05; % mm
     amp_input_data.locs = locs*amp_input_data.block_size; % block size is 0.06 mm currently.
     amp_input_data.dec = dec;
     amp_input_data.bias = bias;
@@ -320,52 +384,52 @@
     
     unique_amps = unique(amp_output_data.amp_list);
     color_list = inferno(numel(unique_amps)+1);
-%     figure('Position',[681 559 950 420]);
-%     for i_amp = 1:numel(unique_amps)
-%         amp_mask = amp_output_data.amp_list == unique_amps(i_amp);
-%         dist_amp = dist_to_stim(amp_mask,:);
-%         was_act = amp_output_data.num_pulses_active(amp_mask,:) > 0;
-%         num_act = amp_output_data.num_pulses_active(amp_mask,:);
-%         
-%         dist_amp= reshape(dist_amp,[],1);
-%         was_act = reshape(was_act,[],1);
-%         num_act = reshape(num_act,[],1);
-%         
-%         dist = dist_amp(was_act);
-%         dist = repelem(dist,num_act(was_act));
-%         spike_counts = histcounts(dist,bin_edges);
-%         spike_counts = spike_counts;
-%         num_neurons = histcounts(dist_amp,bin_edges);
-%         
-%         subplot(1,2,1); hold on;
-%         x_data = 1000*(bin_edges(1:end-1)+mode(diff(bin_edges))/2);
-%         plot(x_data,spike_counts./num_neurons/(amp_input_data.train_length*amp_input_data.freqs_test),...
-%             'o','markersize',8,'linewidth',1.5,'color',color_list(i_amp,:));
-%         % plot activation function for this amplitude
-%         [a_val,b_val] = getModelBasedActivationParameters(unique_amps(i_amp));
-%         plot(x_data, 1-1./(1+exp(-a_val*(x_data - b_val))),'--','linewidth',1.5,'color',color_list(i_amp,:));
-%         
-%         subplot(1,2,2); hold on;
-%         plot(1000*(bin_edges(1:end-1)+mode(diff(bin_edges))/2),spike_counts/size(amp_output_data.amp_list,1),'o','markersize',8,'linewidth',1.5,'color',color_list(i_amp,:));
-%     end
-%     subplot(1,2,1);
-%     xlabel('Distance from stim (\mum)');
-%     ylabel('Proportion of activated neurons');
-%     formatForLee(gcf);
-%     set(gca,'fontsize',14);
-%     xlim([0,2000]);
-%     
-%     subplot(1,2,2);
-%     xlabel('Distance from stim (\mum)');
-%     ylabel('Number of spikes per train');
-%     formatForLee(gcf);
-%     set(gca,'fontsize',14);
-%     xlim([0,2000]);
+    figure('Position',[681 559 950 420]);
+    for i_amp = 1:numel(unique_amps)
+        amp_mask = amp_output_data.amp_list == unique_amps(i_amp);
+        dist_amp = dist_to_stim(amp_mask,:);
+        was_act = amp_output_data.num_pulses_active(amp_mask,:) > 0;
+        num_act = amp_output_data.num_pulses_active(amp_mask,:);
+        
+        dist_amp= reshape(dist_amp,[],1);
+        was_act = reshape(was_act,[],1);
+        num_act = reshape(num_act,[],1);
+        
+        dist = dist_amp(was_act);
+        dist = repelem(dist,num_act(was_act));
+        spike_counts = histcounts(dist,bin_edges);
+        spike_counts = spike_counts;
+        num_neurons = histcounts(dist_amp,bin_edges);
+        
+        subplot(1,2,1); hold on;
+        x_data = 1000*(bin_edges(1:end-1)+mode(diff(bin_edges))/2);
+        plot(x_data,spike_counts./num_neurons/(amp_input_data.train_length*amp_input_data.freqs_test),...
+            'o','markersize',8,'linewidth',1.5,'color',color_list(i_amp,:));
+        % plot activation function for this amplitude
+        [a_val,b_val] = getModelBasedActivationParameters(unique_amps(i_amp));
+        plot(x_data, 1-1./(1+exp(-a_val*(x_data - b_val))),'--','linewidth',1.5,'color',color_list(i_amp,:));
+        
+        subplot(1,2,2); hold on;
+        plot(1000*(bin_edges(1:end-1)+mode(diff(bin_edges))/2),spike_counts/size(amp_output_data.amp_list,1),'o','markersize',8,'linewidth',1.5,'color',color_list(i_amp,:));
+    end
+    subplot(1,2,1);
+    xlabel('Distance from stim (\mum)');
+    ylabel('Proportion of activated neurons');
+    formatForLee(gcf);
+    set(gca,'fontsize',14);
+    xlim([0,2000]);
     
-% look at how effect of stimulation compares to PDs of stimulation location
+    subplot(1,2,2);
+    xlabel('Distance from stim (\mum)');
+    ylabel('Number of spikes per train');
+    formatForLee(gcf);
+    set(gca,'fontsize',14);
+    xlim([0,2000]);
+    
+%% look at how effect of stimulation compares to PDs of stimulation location
 
     f=plotStimEffectVsStimPD(amp_input_data, amp_output_data, pd_table);
-    f.Name = [file_id,'_activatedPop_vs_stimEffect'];
+    f.Name = [file_id,'_stimPDvsstimEffect'];
     
 %% look at how activated population compares to stimulation location PD
     % compare across amplitudes and activation functions. 

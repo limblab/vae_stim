@@ -8,10 +8,9 @@ function [point_kin] = getPointKinematics(input_data)
     % generate mot file
     writeMotFile(input_data.mot_path, input_data.mot_name, input_data.t, input_data.joint_ang, input_data.joint_names, input_data.in_deg); % in_deg = 1;
 
-    
     % Pull in the modeling classes straight from the OpenSim distribution
     import org.opensim.modeling.*
-
+    
     % Go to the folder in the subject's folder where IK Results are
     ik_results_folder = fullfile(data_dir, 'IKResults');
 
@@ -56,8 +55,8 @@ function [point_kin] = getPointKinematics(input_data)
         analyzeTool.print(fullfile(setupfiles_folder, outfile));
 
         analyzeTool.run();
-        fprintf(['Performing IK on cycle # ' num2str(trial) '\n']);
-
+%         fprintf(['Performing IK on cycle # ' num2str(trial) '\n']);
+% 
     end
     
     
@@ -119,6 +118,5 @@ function [point_kin] = getPointKinematics(input_data)
             point_kin.(var_name) = temp_kin;
         end
     end
-    
-    
+
 end

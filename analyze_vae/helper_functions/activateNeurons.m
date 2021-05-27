@@ -70,7 +70,8 @@ function [ is_act, can_be_act, prob_act ] = activateNeurons( input_data )
             prob_act = 1-1./(1+exp(-a_val*(dist*1000 - b_val))); % dist is in mm, was in um when fitting logistic curves
 
             % get correlation circle radius based on amplitude
-            r_vals = [50,150,250,520]./1000; %mm 
+%             r_vals = [50,150,250,520]./1000; %convert to mm, from Karthik's modeling data
+            r_vals = [0.1077, 0.1524, 0.1967, 0.2782]; % already in mm, Stoney's square root relationship, k = 1292 uA/mm^2
             amp_vals = [15,30,50,100];
             corr_r = interp1(amp_vals,r_vals,input_data.amp,'linear','extrap');
             
@@ -85,13 +86,13 @@ function [ is_act, can_be_act, prob_act ] = activateNeurons( input_data )
             % scale corr_vals so that mean is 0,
             corr_vals = corr_vals-mean(corr_vals);
             
-            max_fact = 0.5; % scales effect of correlation on prob_act
+            max_fact = input_data.dir_act_fact; % scales effect of correlation on prob_act
             corr_fact = max_fact*(2*dist);
             corr_fact(dist > 0.5) = max_fact;
             
-            corr_prob = (corr_fact.*corr_vals)+1; % want corr=[1,0,-1] -> prob=[1+corr_fact,1, 1-corr_factor]
+            corr_mult = (corr_fact.*corr_vals)+1; % want corr=[1,0,-1] -> prob=[1+corr_fact,1, 1-corr_factor]
                         
-            prob_act = prob_act.*corr_prob;
+            prob_act = prob_act.*corr_mult;
 
             prob_act(prob_act>1) = 1; prob_act(prob_act < 0) = 0;
             

@@ -1,14 +1,22 @@
 %% look at effect of stimulation on whole arm kinematics. 
     % pick a trial (start idx) and other inputs
     start_idx = 50; 
-    stim_lag = 20;
+    stim_lag = 10;
     stim_len = 0.2; % s
     
+    % code below, get stim bins and so on.
+    stim_bins = start_idx + stim_lag+[1:ceil(stim_len/td.bin_size)] - 1;
+    stim_bins_adj = stim_lag+[1:ceil(stim_len/td.bin_size)];
+    end_idx = stim_bins(end)+5;
+    
+    % set inputs
     stim_effect_input = [];
     stim_effect_input.FR = td.VAE_firing_rates(stim_bins,:);
     stim_effect_input.dec = dec;
-    stim_effect_input.act_func = 'exp_decay';
-    stim_effect_input.locs = locs*0.06; % mm per block
+    stim_effect_input.direct_act_func = 'model_based_circle_corr';
+    stim_effect_input.trans_act_func = '';
+    stim_effect_input.block_size = 0.06; % in mm
+    stim_effect_input.locs = locs*stim_effect_input.block_size; % mm per block
     
     stim_effect_input.stim_loc = [1,1];
     stim_effect_input.amp = 20; % uA
@@ -16,25 +24,26 @@
     stim_effect_input.n_pulses = numel(stim_effect_input.pulse_bin_idx);
     stim_effect_input.bin_size = td.bin_size;
     
+    stim_effect_input.corr_table = corr_table;
+    stim_effect_input.PD = pd_table.velPD;
+    
     analysis_data = [];
-    analysis_data.data_dir = 'D:\Lab\Data\StimModel\opensim_data';
-    analysis_data.settings_path = 'D:\Lab\GIT\monkeyArmModel';
+    analysis_data.data_dir = 'D:\Joseph\stimModel\opensim_data';
+    analysis_data.settings_path = 'C:\Users\jts3256\Desktop\Lab\GIT\monkeyArmModel';
     analysis_data.settings_fname = 'matlab_pointKin_settings.xml';
-    analysis_data.mot_path = 'D:\Lab\Data\StimModel\opensim_data\IKResults';
+    analysis_data.mot_path = 'D:\Joseph\stimModel\opensim_data\IKResults';
     analysis_data.mot_name = 'test.mot';
     analysis_data.joint_names = td.joint_names;
     analysis_data.in_deg = 1;
     
-    % code below, get stim bins and so on.
-    stim_bins = start_idx + stim_lag+[1:ceil(stim_len/td.bin_size)] - 1;
-    stim_bins_adj = stim_lag+[1:ceil(stim_len/td.bin_size)];
-    end_idx = stim_bins(end)+5;
     
-    % decode joint angles without stim
+    
+    %% decode joint angles without stim
     dec_joint_vel_no_stim = predictData(td.VAE_firing_rates(start_idx:end_idx,:),dec,bias);
     dec_joint_ang_no_stim = integrateVel(td.joint_ang(start_idx,:),dec_joint_vel_no_stim,td.bin_size);
     
-    % apply stim, decode joint angles with stim
+
+    %% apply stim, decode joint angles with stim
     stim_effect = getStimEffect(stim_effect_input);
     
     VAE_FR = td.VAE_firing_rates(start_idx:end_idx,:);
@@ -48,12 +57,15 @@
     analysis_data.t = ((1:1:size(dec_joint_ang_no_stim,1))-1)*td.bin_size;
     point_kin_no = getPointKinematics(analysis_data);
     
-    % stim
+%% stim
+tic;
     analysis_data.joint_ang = dec_joint_ang;
     analysis_data.t = ((1:1:size(dec_joint_ang,1))-1)*td.bin_size;
-    point_kin_stim = getPointKinematics(analysis_data);
-    
-% visualize in a 3D plot.
+    for i = 1:100
+        point_kin_stim = getPointKinematics(analysis_data);
+    end
+    toc
+%% visualize in a 3D plot.
     % plot hand and elbow locations right before and after stim for no stim
     % and stim condition
     

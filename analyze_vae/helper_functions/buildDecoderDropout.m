@@ -18,12 +18,12 @@ function [ output_data ] = buildDecoderDropout( input_data )
         dec = dec/(1-input_data.dropout_rate);
         warning('loaded dec and bias before training');
     else
-        dec = rand(2,size(input_data.fr,1))-0.5;
-        bias = [0;0];
+        dec = rand(size(input_data.hand_vel,2),size(input_data.fr,1))-0.5;
+        bias = zeros(size(input_data.hand_vel,2),1);
     end
 
-    vaf_list_drop = zeros(input_data.num_iters,2);
-    vaf_list_mdl = zeros(input_data.num_iters,2);
+    vaf_list_drop = zeros(input_data.num_iters,size(dec,1));
+    vaf_list_mdl = zeros(input_data.num_iters,size(dec,1));
     n_neurons = size(input_data.fr,1);
     
     for i_iter = 1:input_data.num_iters

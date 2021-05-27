@@ -21,21 +21,24 @@ function [FR_syn] = getSynapticEffects(input_data)
             
         case 'corr_project'
             conn_space_constant = 0.25; % mm
-            tuning_space_constant = pi/2; % radians
+            tuning_space_constant = pi/4; % radians
             activated_neurons = find(any(input_data.is_act_bin,2));
             FR_fact = 1.0;
             
             prob_samp = rand(size(input_data.locs,1),numel(activated_neurons),2);
-                        
-            PD_diff = angleDiff(input_data.PD, input_data.PD(activated_neurons)',1,0); % use radians, don't preserve sign
-                        
+                   
+            PD_diff = zeros(numel(input_data.PD),numel(activated_neurons));
+            for i = 1:numel(activated_neurons)
+                PD_diff(:,i) = angleDiff(input_data.PD, input_data.PD(activated_neurons(i)),1,0); % use radians, don't preserve sign
+            end      
+            
             dist_mat = sqrt(sum((reshape(input_data.locs,size(input_data.locs,1),1,size(input_data.locs,2)) - ...
                 reshape(input_data.locs(activated_neurons,:),1,numel(activated_neurons),size(input_data.locs,2))).^2,3));
             dist_mat(dist_mat==0) = 100000;
             
             p_conn_dist = exp(-dist_mat/conn_space_constant);
             p_conn_exc = exp(-PD_diff/tuning_space_constant);
-            p_conn_inhib = mean(p_conn_exc);
+            p_conn_inhib = mean(exp(-[0:0.01:pi]/tuning_space_constant));
             
             is_exc = squeeze(prob_samp(:,:,1)) < p_conn_dist.*p_conn_exc;
             is_inhib = squeeze(prob_samp(:,:,2)) < p_conn_dist.*p_conn_inhib;
