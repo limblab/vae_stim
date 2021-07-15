@@ -1,6 +1,6 @@
 %% load file
     pathname = 'D:\Joseph\stimModel';
-    maps_folder_name = '';
+    maps_folder_name = 'Han_20160315_big_maps';
     td_filename = 'Han_20160315_RW_smoothKin_jointAngjointVel_50ms_td.mat';
     fr_file = 'rates_Han_20160315_RW_2021-05-12-210801.csv';
     
@@ -27,9 +27,9 @@
     
 % match up data lengths
 
-    field_len = length(td.vel);
+    field_len = length(td.joint_vel);
     td_fieldnames = fieldnames(td);
-    [~,mask] = rmmissing(td.vel);
+    [~,mask] = rmmissing(td.joint_vel);
 
     for i_field = 1:numel(td_fieldnames)
         if(length(td.(td_fieldnames{i_field})) == field_len)
@@ -37,67 +37,40 @@
         end
     end    
 
+%% get correlation score in neighbors
+    corr_table = corr(td.VAE_firing_rates);  
+    corr_input = [];
+    corr_input.nbor_max_r = 2.5; %2.25-2.8 gives same values; % blocks (or neurons away). Not a um distance
+    corr_input.nbor_min_r = 0;
+    corr_input.num_sample = 1600;
+    % I wrote this function to handle arbitrary metrics instead of just PDs
+    % if metric has multiple columns, function defaults to taking mean
+    % difference across columns
+    corr_input.metric = corr_table; % if angle, assumes radians
+    corr_input.metric_is_angle = 1; % if the metric is an angle, flag this
+    corr_input.locs = locs;
     
-%% analyze firing rates
-    % plot histogram of firing rates (and compare to real thing at some
-    % point). Also plot firing rate during reaches in different directions
-    % heatmap showing neuron firing rate against speed and movement
-    % direction
+    corr_val = zeros(size(td.VAE_firing_rates,2),1);
     
-    % for each neuron, build a glm predicting firing rate from cosine(dir) + speed
-    td=getNorm(td,'vel');
-    n_neurons = size(td.VAE_firing_rates,2);
-    n_params = 6; %constant, hand(x,y) position, hand (x,y) vel, speed
-    glm_fits = nan(n_neurons,n_params);
-    pr2_fits = nan(n_neurons,2); % train, test
-    state = [td.pos, td.vel, td.vel_norm]; % offset term automatically included
-    
-    for i_unit = 1:size(td.VAE_firing_rates,2)
-        fr = td.VAE_firing_rates(:,i_unit);
-        train_idx = datasample(1:1:length(state),ceil(0.9*length(state)),'Replace',false);
-        test_idx =setdiff(1:1:length(state),train_idx);
-        mdl = fitglm(state(train_idx,:),fr(train_idx),'Distribution','Poisson');
+    for i = 1:numel(corr_val)
+        dist_from_stim = sqrt(sum((locs-locs(i,:)).^2,2));
+        mask = dist_from_stim > corr_input.nbor_min_r & dist_from_stim <= corr_input.nbor_max_r;
         
-        glm_fits(i_unit,:) = mdl.Coefficients.Estimate;
-        
-        % get pR2 for each neuron
-        pr2_fits(i_unit,2) = compute_pseudo_R2(fr(test_idx,:), predict(mdl,state(test_idx,:)),mean(fr(test_idx,:)));
-        pr2_fits(i_unit,1) = compute_pseudo_R2(fr(train_idx,:), predict(mdl,state(train_idx,:)),mean(fr(train_idx,:)));
+        corr_val(i) = mean(corr_table(i,mask==1));
     end
     
-%% get histogram of pr2 and heatmap of predicted firing rates for an example neuron (speed and direction vs FR)
-    figure();
-    histogram(pr2_fits(:,2)) % pr2_fits is (train, test)
-    xlabel('Pseudo R2');
-    ylabel('Proportion of neurons');
-    formatForLee(gcf); set(gca,'fontsize',14);
-    
-    i_unit = 1530;
-    speed_grid = 0:1:max(td.speed);
-    dir_grid = -180:10:180;
-    fr_grid = zeros(numel(speed_grid),numel(dir_grid));
-    
-    for i_speed = 1:numel(speed_grid)
-        for i_dir = 1:numel(dir_grid)
-            % constant, hand(x,y) position, hand (x,y) vel, speed
-            curr_vel = speed_grid(i_speed)*[cos(deg2rad(dir_grid(i_dir))), sin(deg2rad(dir_grid(i_dir)))];
-            curr_state = [median(td.pos(:,:)), curr_vel, speed_grid(i_speed)];
-            fr_grid(i_speed,i_dir) = glmval(glm_fits(i_unit,:)',curr_state,'log','Constant','on');
-        end
-    end
-    
-    figure();
-    imagesc(fr_grid);
-    xlabel('Direction (degrees)');
-    ylabel('Speed (cm/s)');
+    f=figure();
+    corr_plot = reshape(corr_val,map_dim);
+    imagesc(corr_plot);
+    colormap(colorcet('L1'));
     b=colorbar;
-    b.Label.String = 'Firing rate (sp/s)';
-    formatForLee(gcf);
-    set(gca,'fontsize',14);
+    b.Label.String = 'Neighbor corr';
+    b.Label.FontSize = 14;
     
     
 %% analyze structure of map
     % get PDs
+    td.vel = td.vel;
     pd_params = [];
     pd_params.out_signals = 'VAE_firing_rates';
     pd_params.in_signals = {'vel'};
@@ -108,7 +81,9 @@
     
     td_reward = splitTD(td,splitParams);
     td_reward = td_reward([td_reward.result]=='R');
-    pd_table = getTDPDs(td_reward, pd_params);
+    pd_table = getTDPDs(td_reward,pd_params);
+%     td_reward = td;
+%     pd_table = getTDPDs3D(td_reward, pd_params);
 
     
 % plot polar histogram of PDs and map of PDs
@@ -180,15 +155,16 @@
     
     f.Name = [file_id,'_PD_neighbor_dist'];
     
-%% get neighbor score for all neurons
+%% get neighbor score for all neurons for PDs
+
     sim_input_data = [];
     sim_input_data.locs = locs*0.06; % 60 mm block size
     sim_input_data.stim_loc = sim_input_data.locs;
     sim_input_data.metric_name = 'PD';
     sim_input_data.PD = pd_table.velPD; % PD must be in radians!
-    sim_input_data.is_ang = 1;
+    sim_input_data.is_ang = 0;
        
-    sim_input_data.nbor_max_r = 0.08; % in mm
+    sim_input_data.nbor_max_r = 0.12; % in mm
     sim_input_data.nbor_min_r = 0;
     
     neigh_sim_all = getNeighborsSimilarity(sim_input_data);
@@ -198,9 +174,10 @@
     imagesc(sim_map);
     colormap(colorcet('L1'));
     b=colorbar;
-    b.Label.String = 'Cosine Similarity';
+    b.Label.String = 'Cosine Similarity between PDs';
     b.Label.FontSize = 14;
     f.Name = [file_id,'_sim_cortical_map'];
+   
     
     
 %% build decoder or load one in (Building can take awhile)
@@ -269,7 +246,6 @@
 %% get correlations across neurons
 
     corr_table = corr(td.VAE_firing_rates);
-    
   
   %%  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -287,16 +263,17 @@
     % affect firing rate of neurons, and thus the effect of stim.
         
     amp_input_data = [];
-    amp_input_data.amps_test = [20,40]; % uA
+    amp_input_data.amps_test = [5,10,15,20,25,30,40,60,80,100]; % uA
+%     amp_input_data.amps_test = [15,20]; % uA
     amp_input_data.direct_acts_test = {'model_based_circle_corr'};
-    amp_input_data.dir_act_fact = [0.5];    
+    amp_input_data.dir_act_fact = [0.5]; % leaving empty screws things up.     
     
-    amp_input_data.trans_acts_test = {'corr_project'};
+    amp_input_data.trans_acts_test = {'none'};
 
     amp_input_data.freqs_test = [100]; % Hz
     amp_input_data.train_length = [0.5]; % in s 
 
-    amp_input_data.n_locs = 150;
+    amp_input_data.n_locs = 300;
     amp_input_data.n_moves = 1;
     
     amp_input_data.td = td;
@@ -326,16 +303,25 @@
     
 %% plot hand and elbow PD vs stim loc PD (scatter plot, histogram of absolute diff)
     
-    f=plotHandVelElbowVelVsStimPD(amp_input_data, amp_output_data, pd_table);
-    f.Name = [file_id,'_activatedPop_vs_stimEffect'];
+    [f,prop_pred,vel_len]=plotHandVelElbowVelVsStimPD(amp_input_data, amp_output_data, pd_table);
+    f.Name = [file_id,'_activatedPop_vs_stimEffect'];       
     
-    
-
-%% plot hand dir vs. elbow dir (scatter plot, histogram of absolute diff)
-    
-    
-    
-    
+    figure();
+    subplot(1,2,1)
+    plot(amp_input_data.amps_test,squeeze(prop_pred),'markersize',20,'marker','.')
+    xlabel('Amplitude (\muA)');
+    ylabel('Proportion predictable');
+    formatForLee(gcf);
+    set(gca,'fontsize',14);
+    xlim([0,110]); ylim([0,1]);
+    subplot(1,2,2)
+    vel_len = squeeze(vel_len);
+    errorbar(amp_input_data.amps_test,mean(vel_len,2),std(vel_len,[],2),'markersize',20,'marker','.');
+    xlabel('Amplitude (\muA)');
+    ylabel('Hand Velocity Magnitude');
+    formatForLee(gcf);
+    set(gca,'fontsize',14);
+    xlim([0,110]); ylim([0,0.07]);
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%% run experiments looking only at hand with appropriate decoder %%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

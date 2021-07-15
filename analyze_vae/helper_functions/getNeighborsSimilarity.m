@@ -25,7 +25,7 @@ function [similarity_out] = getNeighborsSimilarity(input_data)
     
 % get neighbor mask, where a 1 indicates if it is a neighbor and a 0
 % indicates if it is not.
-    dist_from_stim = ((input_data.stim_loc(:,1) - input_data.locs(:,1)').^2 + (input_data.stim_loc(:,2) - input_data.locs(:,2)').^2);
+    dist_from_stim = sqrt((input_data.stim_loc(:,1) - input_data.locs(:,1)').^2 + (input_data.stim_loc(:,2) - input_data.locs(:,2)').^2);
     
     is_neighbor = dist_from_stim < input_data.nbor_max_r & dist_from_stim >= input_data.nbor_min_r;
     

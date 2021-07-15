@@ -1,4 +1,4 @@
-function [f] = plotHandVelElbowVelVsStimPD(amp_input_data, amp_output_data, pd_table)
+function [f, prop_pred,vel_len] = plotHandVelElbowVelVsStimPD(amp_input_data, amp_output_data, pd_table)
 
 % makes a 2x2 figure for each activation. Top row = hand, bottom row = elbow. First col =
 % scatter plot 2nd col = histogram of absolute differences
@@ -21,6 +21,9 @@ function [f] = plotHandVelElbowVelVsStimPD(amp_input_data, amp_output_data, pd_t
     
     ax = [];
     max_edge = pi;
+    prop_pred = zeros(numel(amp_input_data.dir_act_fact), numel(amp_input_data.trans_acts_test),numel(amp_input_data.amps_test));
+    vel_len = zeros(numel(amp_input_data.dir_act_fact), numel(amp_input_data.trans_acts_test),numel(amp_input_data.amps_test),amp_input_data.n_locs);
+    
     for i_dir_act = 1:numel(amp_input_data.dir_act_fact)
         for i_trans_act = 1:numel(amp_input_data.trans_acts_test)
             f=figure('Position',[681 559 1144 420]);
@@ -43,6 +46,11 @@ function [f] = plotHandVelElbowVelVsStimPD(amp_input_data, amp_output_data, pd_t
         %             neigh_mask = amp_output_data.neighbor_similarity > prctile(amp_output_data.neighbor_similarity,75);
                     mask = trans_act_func_mask & amp_mask & act_fact_mask; % & neigh_mask;
 
+                    if(i_row == 1) % hand vel
+                        prop_pred(i_dir_act,i_trans_act,i_amp) = sum(rad2deg(angleDiff(stim_PD(mask),ang(mask),1,0)) <= 45)/sum(mask); % abs is not necessary
+                        vel_len(i_dir_act,i_trans_act,i_amp,:) = sqrt(sum(vel(mask,:).^2,2));
+                    end
+                    
                     subplot(3,2,(i_row-1)*2 + 1); hold on; % plot scatter plot
                     plot(rad2deg(stim_PD(mask)), rad2deg(ang(mask)),'o','color',color_list(i_amp,:),'markersize',4);
                     

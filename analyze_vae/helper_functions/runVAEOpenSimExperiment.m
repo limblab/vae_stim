@@ -103,9 +103,26 @@ function [output_data] = runVAEOpenSimExperiment(input_data, opensim_data)
                             for i_move = 1:input_data.n_moves
                                 stim_effect_data.FR = input_data.td.VAE_firing_rates(stim_start_idx(i_move):stim_start_idx(i_move)+stim_len-1,:);
                                 stim_effect_data.stim_loc = stim_locs(i_loc,:);
-
+                                
+                                % get 4 stimulation locations, stack them.
+                                % Require PD to be within 20 degs of
+                                % stimulated electrode
+                                stim_loc_idx = getStimLocationIdx(stim_locs(i_loc,:), input_data.locs);
+                                stim_loc_PD = input_data.PD(stim_loc_idx);
+                                
+                                % get list of locations with simlar PDs,
+                                PD_diff = input_data.PD - stim_loc_PD;
+                                suitable_elecs = find(abs(PD_diff)<20*pi/180);
+                                % remove stim loc
+                                suitable_elecs(suitable_elecs==stim_loc_idx) = [];
+                                
+                                extra_stim_elecs = datasample(suitable_elecs,3,'Replace',false);
+                                
+                                stim_effect_data.stim_loc = input_data.locs([stim_loc_idx;extra_stim_elecs],:);
+                                
                                 stim_effect_temp = getStimEffect(stim_effect_data);
 
+                                stim_effect_data.stim_loc = stim_locs(i_loc,:); % this is a hack to do multi-electrode stim....
                                 % get activation pattern if i_move = 1;
                                 if(i_move==1)
                                     stim_effect_data.can_be_act = stim_effect_temp.can_be_act;

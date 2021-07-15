@@ -28,8 +28,8 @@
     trial_idx = 120;
     move_len_idx = ceil(10.0/td.bin_size);
     
-%     [~,stim_elec_idx] = datasample(1:1:size(locs_cort,1),1);
-%     stim_loc = locs_cort(stim_elec_idx,:);
+    [~,stim_elec_idx] = datasample(1:1:size(locs_cort,1),1);
+    stim_loc = locs_cort(stim_elec_idx,:);
     
     stim_in_data.FR = td.VAE_firing_rates(trial_idx:trial_idx+move_len_idx-1,:);
     stim_in_data.dec = dec; stim_in_data.bias = bias;
@@ -45,13 +45,13 @@
     stim_in_data.PD = pd_table.velPD;
     
     stim_eff = {};
-    stim_in_data.direct_act_func = 'model_based';
+    stim_in_data.direct_act_func = 'model_based_circle_corr';
+    stim_in_data.dir_act_fact = [0];
     stim_eff{1} = getStimEffect(stim_in_data);
     
-%     stim_in_data.direct_act_func = 'model_based_floor';
-%     stim_eff{2} = getStimEffect(stim_in_data);
     
     stim_in_data.direct_act_func = 'model_based_circle_corr';
+    stim_in_data.dir_act_fact = [1.0];
     stim_eff{2} = getStimEffect(stim_in_data);
     
     

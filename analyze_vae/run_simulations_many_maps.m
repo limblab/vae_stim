@@ -1,7 +1,7 @@
 %% get folder path for maps and trial data
     pathname = 'D:\Joseph\stimModel';
-    td_filename = 'Han_20160315_RW_SmoothKin_50ms.mat';
-    map_foldername = 'Han_20160315_maps';
+    td_filename = 'Han_20160315_RW_smoothKin_jointAngjointVel_50ms_td.mat';
+    map_foldername = 'Han_20160315_big_maps';
     fr_files = dir([pathname filesep map_foldername filesep '*.csv']);
 
     load([pathname filesep 'td' filesep td_filename]);
