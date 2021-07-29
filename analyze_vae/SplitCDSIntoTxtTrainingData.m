@@ -15,16 +15,24 @@ td = smoothSignals(td,smoothParams);
 % rebin 
 td = binTD(td, 5);
 
+
+%% get during rewarded trial mask
+
+during_rewarded_trial = zeros(size(td.joint_vel,1),1);
+
+for i_start = 1:numel(td.idx_startTime)
+    if(td.result(i_start)=='R')
+        during_rewarded_trial(td.idx_startTime(i_start):td.idx_endTime(i_start)) = 1;
+    end 
+end
+
+
 %% load from .mat file
 
 filename = 'Han_20160315_RW_CDS_001.mat';
 pathname = 'D:\Lab\Data\StimModel';
 
 load([pathname filesep filename]);
-
-% Smooth kinematic variables
-%%
-
 
 %% extract opensim signals
 opensim_sigs = {'joint_ang','joint_vel','opensim_hand_pos','opensim_hand_vel',...
@@ -103,20 +111,21 @@ histogram(ang_samp)
 
 %% set nan's as -10000 so that python code doesn't fail
 
-td.joint_vel(any(isnan(td.joint_vel),2),:) = [];
+% td.joint_ang(any(isnan(td.ang),2),:) = [];
+% td.joint_vel(any(isnan(td.joint_vel),2),:) = [];
 
 %% Extract joint_vel data in txt file
 joint_vel = td.joint_vel;
 % joint_vel_no_nan = joint_vel(all(joint_vel > -1000,2),:);
 
 [~,mu,sigma] = zscore(joint_vel);
-joint_vel = (joint_vel-mu)./sigma;
+joint_vel_norm = (joint_vel-mu)./sigma;
 % joint_vel = fix(joint_vel * 10^6)/10^6;
 % train_joint_vel = joint_vel(train_idx,:);
 
 % writematrix(joint_vel, 'Han_20160325_RW_SmoothNormalizedJointVel_50ms.txt')
 %%
-dlmwrite([pathname,filesep,'Han_20160315_RW_SmoothRawJointVel_50ms.txt'],joint_vel,'delimiter',',','newline','pc')
+dlmwrite([pathname,filesep,'Han_20160315_RW_RewardTrialMask_50ms.txt'],during_rewarded_trial,'delimiter',',','newline','pc')
 
 
 

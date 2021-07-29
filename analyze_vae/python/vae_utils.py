@@ -4,49 +4,15 @@ Created on Thu Jul 15 09:26:52 2021
 
 @author: Joseph Sombeck
 """
-import yaml
 import torch
 import vae_model_code as mdl
 import numpy as np
-
-def load_model_params():
-    return 1
-
-
-class Params:
-    params={}
-    def __init__(self):
-        # initialize parameters
-        self.params = {'batch_size' : 1024,
-            'latent_shape' : [80,80],
-            'n_epochs' : 3000,
-            'sampling' : 'poisson',
-            'n_samples' : 20,
-            'layers' : [20,40],
-            'cuda' : True,        
-            'sigma' : 2.0,
-            'eta' : 0.00001,
-            'lateral' : 'mexican',
-            'lambda_l' : 0,
-            'default_rate' : 3.0, # the expected number of spikes in each bin
-            'save_path' : '/home/jts3256/projects/stimModel/models',
-            'dropout' : 99, # as a percentage
-        }
-        
-        
-    def load_params(self,filename):
-        # load in parameters from a file. Return dictionary of parameters
-        with open(filename) as f:
-            config = yaml.load(f, Loader=yaml.FullLoader)
-            
-        # set integer parameters as integers
-        self.params=config
-        
-    def save_params(self,filename):
-        # write parameters to a  file
-        with open(filename,'w') as f:
-            doc = yaml.dump(self.params,f)
-
+import matplotlib.pyplot as plt
+from sklearn.metrics.pairwise import euclidean_distances
+from sklearn.metrics.pairwise import cosine_similarity
+import osim_utils as osim
+import statsmodels.api as sm
+import global_vars as gl
 
 def load_vae_parameters(fpath, input_size):
     encoder = mdl.Encoder(input_size=input_size)
@@ -78,6 +44,11 @@ def vae_get_rates(vae, in_sig,bin_size):
     
     return rates/bin_size
 
+def sample_rates(rates):
+    rates = torch.from_numpy(rates[:,:]).type(torch.FloatTensor)
+    posterior = torch.distributions.Poisson(rates*gl.params.params['n_samples'])
+    samples = posterior.sample()/gl.params.params['n_samples']
+    return samples.detach().numpy()
 
 
 class LinearDecoder(torch.nn.Module):
@@ -137,12 +108,103 @@ def get_decoder_params(dec):
             
     return param_list
 
-def global_vars():
-    global params;
-    params = Params;
-    global bin_size
-    bin_size = 0.05; # s
+
+def convert_list_to_map(data,mapping):
+    data_as_map = np.zeros((np.max(mapping[:,0])+1,np.max(mapping[:,1])+1,data.shape[0]))
     
+    for i_time in range(data.shape[0]):
+        for i_data in range(data.shape[1]):
+            data_as_map[mapping[i_data,0],mapping[i_data,1],i_time] = data[i_time,i_data]
+        
+    return data_as_map
+
+def visualize_activation_map(stim_rates, no_stim_rates, idx=1):
+    # visualize activation as a heatmap
+    mapping = mdl.locmap().astype(int)
+    no_stim_rates_map = convert_list_to_map(no_stim_rates,mapping)
+    stim_rates_map = convert_list_to_map(stim_rates,mapping)
+
+    plt.figure()
+    fig, ax = plt.subplots(1,3)
+    ax[0].imshow(no_stim_rates_map[:,:,idx])
+    ax[1].imshow(stim_rates_map[:,:,idx])
+    ax[2].imshow(stim_rates_map[:,:,idx]-no_stim_rates_map[:,:,idx])
+    
+    return 0
+    
+def visualize_activation_dist(is_act, stim_chans, block_size):
+    # visualize activation function (change in FR vs. distance)
+    num_act = np.sum(is_act==1,axis=1)
+    mapping = mdl.locmap()
+    
+    dist_to_stim = 100000*np.ones(num_act.shape)
+    
+    for i_chan in stim_chans:
+        stim_chan_loc = mapping[i_chan,:]
+        temp_dist = euclidean_distances(np.transpose(stim_chan_loc.reshape(-1,1)), mapping)*block_size
+        dist_to_stim = np.minimum(dist_to_stim, temp_dist)
+    
+    dist_to_stim = dist_to_stim.reshape(-1,)
+    
+    # bin neurons based on their distance to stim, get probability of activation for neurons in each distance bin
+    dist_edges = np.arange(0,10,0.1) 
+    bin_idx = np.digitize(dist_to_stim,dist_edges) # 0 corresponds to below the first bin, 1 is the first bin
+    prob_act_bin = np.zeros(dist_edges.shape[0] - 1)
+    
+    for i_bin in range(prob_act_bin.shape[0]):
+        prob_act_bin[i_bin] = np.sum(num_act[bin_idx==i_bin])/np.sum(bin_idx==i_bin)/is_act.shape[1] # number of pulses
+    
+    plt.figure()
+    plt.plot(dist_edges[0:-1]+np.mean(np.diff(dist_edges))/2,prob_act_bin)
+    
+    return 0
+ 
+    
+def integrate_vel(kin_0, vels, bin_size):
+    
+    int_kin = np.zeros((vels.shape[0],len(kin_0)))
+    int_kin[0] = kin_0
+    
+    for i in range(1,vels.shape[0]):
+        int_kin[i,:] = int_kin[i-1] + vels[i-1]*gl.bin_size
+    
+    return int_kin
+
+def get_correlation_similarity(vae,joint_vels_norm):
+    rates = vae_get_rates(vae,joint_vels_norm,gl.bin_size)
+    corr_sim_mat = np.corrcoef(rates,rowvar=False)
+    
+    return corr_sim_mat
+
+
+def get_PD_similarity(vae,joint_vels_norm,joint_angs):
+    rates = vae_get_rates(vae,joint_vels_norm,gl.bin_size)
+    point_kin = osim.get_pointkin(joint_angs)
+    hand_vels = point_kin[1][:,1:-1] # remove time column and z-axis
+        
+    glm_in = hand_vels
+    glm_in = sm.add_constant(glm_in,prepend=False)
+    
+    hand_vel_PDs = np.zeros(rates.shape[1])
+    hand_vel_params = np.zeros((rates.shape[1],2))
+    for i_unit in range(rates.shape[1]):
+        if(i_unit % 100 == 0):
+            print(i_unit)
+            
+        glm_out = rates[:,i_unit]
+        glm_PD_mdl = sm.GLM(glm_out,glm_in,family=sm.families.Poisson(sm.families.links.log()))
+        res = glm_PD_mdl.fit()
+        # 0,1,2 = hand pos; 3,4 = hand vel (x,y); 5,6 = hand vel z, constant
+        hand_vel_PDs[i_unit] = np.arctan2(res.params[1],res.params[0])
+        hand_vel_params[i_unit,0] = res.params[0]
+        hand_vel_params[i_unit,1] = res.params[1]
+    
+    
+    PD_sim_mat = cosine_similarity(hand_vel_params)
+    return PD_sim_mat, hand_vel_PDs, hand_vel_params
+    
+    
+
     
     
     

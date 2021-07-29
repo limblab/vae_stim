@@ -2,16 +2,14 @@ import torch
 import numpy as np
 import torch.nn as nn
 from sklearn.metrics.pairwise import euclidean_distances
-import vae_utils
-
-EPS = 1e-6
+import global_vars as gl
 
 def locmap():
     '''
     :return: location of each neuron
     '''
-    x = np.arange(0, vae_utils.params.params['latent_shape'][0], dtype=np.float32)
-    y = np.arange(0, vae_utils.params.params['latent_shape'][1], dtype=np.float32)
+    x = np.arange(0, gl.params.params['latent_shape'][0], dtype=np.float32)
+    y = np.arange(0, gl.params.params['latent_shape'][1], dtype=np.float32)
     xv, yv = np.meshgrid(x, y)
     xv = np.reshape(xv, (xv.size, 1))
     yv = np.reshape(yv, (yv.size, 1))
@@ -23,13 +21,13 @@ def lateral_effect():
     :return: functions of lateral effect
     '''
     locations = locmap()
-    weighted_distance_matrix = euclidean_distances(locations, locations)/vae_utils.params.params['sigma']
+    weighted_distance_matrix = euclidean_distances(locations, locations)/gl.params.params['sigma']
 
-    if vae_utils.params.params['lateral'] == 'mexican':
+    if gl.params.params['lateral'] == 'mexican':
         S = (1.0-0.5*np.square(weighted_distance_matrix))*np.exp(-0.5*np.square(weighted_distance_matrix))
         return S-np.eye(len(locations))
 
-    if vae_utils.params.params['lateral'] == 'rbf':
+    if gl.params.params['lateral'] == 'rbf':
         S = np.exp(-0.5*np.square(weighted_distance_matrix))
         return S-np.eye(len(locations))
     
@@ -42,25 +40,25 @@ class Encoder(nn.Module):
     def __init__(self, input_size):
         super(Encoder, self).__init__()
         self.layer1 = nn.Sequential(
-            nn.Linear(input_size, vae_utils.params.params['layers'][0], bias=False),
+            nn.Linear(input_size, gl.params.params['layers'][0], bias=False),
             #nn.Tanh()
             
         )
 
         self.layer2 = nn.Sequential(
-            nn.Linear(vae_utils.params.params['layers'][0], vae_utils.params.params['layers'][1], bias=False),
+            nn.Linear(gl.params.params['layers'][0], gl.params.params['layers'][1], bias=False),
             #nn.Tanh()
             
         )
 
         self.layer3 = nn.Sequential(
-            nn.Linear(vae_utils.params.params['layers'][1], vae_utils.params.params['latent_shape'][0]*vae_utils.params.params['latent_shape'][1], bias=False),
+            nn.Linear(gl.params.params['layers'][1], gl.params.params['latent_shape'][0]*gl.params.params['latent_shape'][1], bias=False),
             # nn.Softplus()
             nn.ReLU()
         )
 
     def forward(self, x):
-        if vae_utils.params.params['cuda']:
+        if gl.params.params['cuda']:
             self.cuda()
         x = self.layer1(x)
         x = self.layer2(x)
@@ -72,7 +70,7 @@ class Decoder(nn.Module):
     def __init__(self, input_size):
         super(Decoder, self).__init__()
         self.layer1 = nn.Sequential(
-            nn.Linear(vae_utils.params.params['latent_shape'][0]*vae_utils.params.params['latent_shape'][1], input_size, bias=False),
+            nn.Linear(gl.params.params['latent_shape'][0]*gl.params.params['latent_shape'][1], input_size, bias=False),
         )
 
     def forward(self, x):
@@ -83,15 +81,15 @@ class Decoder(nn.Module):
 class VAE(nn.Module):
     def __init__(self, encoder, decoder, lateral):
         super(VAE, self).__init__()
-        if vae_utils.params.params['cuda']:
+        if gl.params.params['cuda']:
             self.cuda()
         self.encoder = encoder
         self.decoder = decoder
         self.lateral = torch.from_numpy(lateral).type(torch.FloatTensor) # not positive definite
-        self.dropout = nn.Dropout(vae_utils.params.params['dropout']/100) # convert from percentage
+        self.dropout = nn.Dropout(gl.params.params['dropout']/100) # convert from percentage
         
     def forward(self, inputs):
-        if vae_utils.params.params['cuda']:
+        if gl.params.params['cuda']:
             self.cuda()
             inputs = inputs.cuda()
         #inputs = inputs/40.0
@@ -100,51 +98,51 @@ class VAE(nn.Module):
         # dropout layer
         rates = self.dropout(rates)+0.0001
         
-        if vae_utils.params.params['sampling'] == 'bernoulli':
+        if gl.params.params['sampling'] == 'bernoulli':
             self.posterior = torch.distributions.Bernoulli(probs=rates)
-            samples = self.posterior.sample([vae_utils.params.params['n_samples']])
+            samples = self.posterior.sample([gl.params.params['n_samples']])
             samples = torch.transpose(samples, 0, 1)
-            samples.clamp(max = vae_utils.params.params['n_samples'])
+            samples.clamp(max = gl.params.params['n_samples'])
             return torch.mean(self.decoder(samples), 1), rates
 
-        if vae_utils.params.params['sampling'] == 'poisson':
-            self.posterior = torch.distributions.Poisson(rates*vae_utils.params.params['n_samples'])
+        if gl.params.params['sampling'] == 'poisson':
+            self.posterior = torch.distributions.Poisson(rates*gl.params.params['n_samples'])
             samples = self.posterior.sample()
-            return self.decoder(samples/vae_utils.params.params['n_samples']), rates
+            return self.decoder(samples/gl.params.params['n_samples']), rates
 
-        if vae_utils.params.params['sampling'] == 'none':
+        if gl.params.params['sampling'] == 'none':
             self.posterior = rates
             return self.decoder(rates), rates
 
 
     def kl_divergence(self):
-        if vae_utils.params.params['sampling'] == 'bernoulli':
-            prior = torch.distributions.Bernoulli(probs = torch.ones_like(self.posterior.probs)*vae_utils.params.params['default_rate'])
+        if gl.params.params['sampling'] == 'bernoulli':
+            prior = torch.distributions.Bernoulli(probs = torch.ones_like(self.posterior.probs)*gl.params.params['default_rate'])
             kl = torch.distributions.kl_divergence(self.posterior, prior)
             return torch.mean(kl)
 
-        if vae_utils.params.params['sampling'] == 'poisson':
+        if gl.params.params['sampling'] == 'poisson':
             prior = torch.distributions.Poisson(torch.ones_like(self.posterior.mean) * \
-                                                vae_utils.params.params['default_rate'] * vae_utils.params.params['n_samples'])
+                                                gl.params.params['default_rate'] * gl.params.params['n_samples'])
             kl = torch.distributions.kl_divergence(self.posterior, prior)
             return torch.mean(kl)
 
-        if vae_utils.params.params['sampling'] == 'none':
+        if gl.params.params['sampling'] == 'none':
             return 0.0
 
     def lateral_loss(self):
-        if vae_utils.params.params['sampling'] == 'bernoulli':
+        if gl.params.params['sampling'] == 'bernoulli':
             rates = torch.squeeze(self.posterior.probs)
-        if vae_utils.params.params['sampling'] == 'poisson':
+        if gl.params.params['sampling'] == 'poisson':
             rates = torch.squeeze(self.posterior.mean)
-        if vae_utils.params.params['sampling'] == 'none':
+        if gl.params.params['sampling'] == 'none':
             rates = torch.squeeze(self.posterior)
 
-        latent_size = vae_utils.params.params['latent_shape'][0]*vae_utils.params.params['latent_shape'][1]
+        latent_size = gl.params.params['latent_shape'][0]*gl.params.params['latent_shape'][1]
         
         n = rates.norm(2, 1).view(-1, 1).repeat(1, latent_size)
         rates = rates/n
-        if vae_utils.params.params['cuda']:
+        if gl.params.params['cuda']:
             A = rates.mm(self.lateral.cuda()).mm(rates.t())/latent_size
         else:
             A = rates.mm(self.lateral).mm(rates.t())/latent_size # self.lateral is a lower triangular matrix
@@ -157,7 +155,7 @@ class VAE(nn.Module):
         self.decoder.layer[0].weight.data = weight/tmp.repeat([input_size, 1])
 
     def save(self):
-        torch.save(self.state_dict(), vae_utils.params.params['save_path'])
+        torch.save(self.state_dict(), gl.params.params['save_path'])
 
 class ConcatDataset(torch.utils.data.Dataset):
     def __init__(self,*datasets):
