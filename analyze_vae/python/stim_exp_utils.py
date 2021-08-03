@@ -12,6 +12,8 @@ import numpy as np
 from sklearn.metrics.pairwise import euclidean_distances
 from scipy.interpolate import interp1d
 import global_vars as gl
+import matplotlib.pyplot as plt
+import scipy as sp
 
 """
 inputs to a trial:
@@ -34,9 +36,8 @@ inputs to a trial:
 def get_activated_neurons(input_data, stim_chan_loc):
     
     # get distance from stim_loc to other neurons 
-    dist_mat = euclidean_distances(stim_chan_loc, input_data['map_data'])*input_data['block_size']
-    dist_mat[0,np.argwhere(dist_mat<=0)] = input_data['block_size']*0.5
-    
+    dist_mat = euclidean_distances(stim_chan_loc, input_data['map_data'])*input_data['block_size'] # in mm
+
     # activate neurons based on direct act func
     if(input_data['dir_func'].lower() == "exp_decay"):
         # use exponential decay activation function. parameters from Karthik's biophysical modeling
@@ -48,13 +49,55 @@ def get_activated_neurons(input_data, stim_chan_loc):
         
         prob_act = np.transpose(np.exp(-dist_mat/space_constant))
         prob_act = np.tile(prob_act,input_data['n_pulses'])
-        prob_act[np.argwhere(prob_act<0.01)] = 0
         
         is_act = np.random.rand(prob_act.shape[0],prob_act.shape[1]) < prob_act
         
         # TODO: IMPLEMENT THIS
-   # elif(input_data['dir_func'].lower() == "sigmoid"):
-        # use sigmoidal activation function. parameters from Karthik's biophysical modeling
+    elif(input_data['dir_func'].lower() == "bio_mdl"):
+        # use activation data from Karthik's modeling.
+        
+        # find amplitude in list
+        amp_idx = np.argwhere(gl.karth_amp == input_data['amp'])
+        
+        # if it isn't there, interpolate
+        if amp_idx.size == 0:
+            print("amplitude not implemented")
+            is_act = np.zeros((input_data['map_data'].shape[0],input_data['n_pulses']))
+            # find amplitudes in bio model that are below and above given amp
+            amp_idx_down = np.argwhere(input_data['amp'] > gl.karth_amp)[-1]
+            amp_idx_up = np.argwhere(input_data['amp'] < gl.karth_amp)[0]
+            
+            # get probability for those amplitudes
+            bin_idx = np.digitize(dist_mat*1000, gl.karth_dist) # convert dist to um
+            bin_idx[bin_idx==0] = 1
+            bin_idx[bin_idx==gl.karth_dist.shape[0]] = gl.karth_dist.shape[0]-1
+            bin_idx = bin_idx - 1
+            
+            prob_act_down = gl.karth_act_prop[amp_idx_down,bin_idx].reshape(-1,1)
+            prob_act_up = gl.karth_act_prop[amp_idx_up,bin_idx].reshape(-1,1)
+            
+            # take weighted mean to do linear
+            prob_act = np.concatenate((prob_act_down,prob_act_up),axis=1)
+            
+            val = (input_data['amp']-gl.karth_amp[amp_idx_down])/(gl.karth_amp[amp_idx_up]-gl.karth_amp[amp_idx_down])
+            amp_weights = np.transpose(np.tile(np.array([1-val,val]),prob_act.shape[0])) 
+            
+            prob_act = np.average(prob_act,axis=1,weights=amp_weights).reshape(-1,1)
+            
+            
+        # if it's there, get distance bin for each neuron, use probability associated with that bin
+        else:
+            bin_idx = np.digitize(dist_mat*1000, gl.karth_dist) # convert dist to um
+            bin_idx[bin_idx==0] = 1
+            bin_idx[bin_idx==gl.karth_dist.shape[0]] = gl.karth_dist.shape[0]-1
+            bin_idx = bin_idx - 1
+            
+            prob_act = gl.karth_act_prop[amp_idx,bin_idx].reshape(-1,1)
+            
+            
+        prob_act = np.tile(prob_act,input_data['n_pulses'])
+        is_act = np.random.rand(prob_act.shape[0],prob_act.shape[1]) < prob_act
+            
     else:
         
         is_act = np.zeros((input_data['map_data'].shape[0],input_data['n_pulses']))
@@ -186,15 +229,7 @@ def run_many_stim_trials(input_data):
     
     # initialize output data
     stim_chan_list = np.zeros((input_data['n_trials'],input_data['n_stim_chans']))
-    joint_ang_0_list = np.zeros((input_data['n_trials'],input_data['all_joint_ang'].shape[1]))
-    true_joint_vels_list = np.zeros((input_data['n_trials'],trial_len_idx,input_data['all_joint_vel_norm'].shape[1]))
-    stim_rates_list = np.zeros((input_data['n_trials'],trial_len_idx,n_neurons))
-    no_stim_rates_list = np.zeros_like(stim_rates_list)
-    true_rates_list = np.zeros_like(stim_rates_list)
-    
-    no_stim_joint_vels_list = np.zeros_like(true_joint_vels_list)
-    stim_joint_vels_list = np.zeros_like(true_joint_vels_list)
-    
+
     true_point_kin_list = []
     no_stim_point_kin_list = []
     stim_point_kin_list = []
@@ -226,44 +261,92 @@ def run_many_stim_trials(input_data):
         # [rates, samp_rates, samp_rates_stim, is_act, joint_vel_true, joint_vel_no_stim, joint_vel_stim, 
         # true_point_kin_data, no_point_kin_data, stim_point_kin_data]
 
-        
-        
         # package outputs    
-        joint_ang_0_list[i_trial] = stim_trial_input['init_joint_ang'] # initial joint angle
-        true_joint_vels_list[i_trial] = stim_trial_input['joint_vel'] # underlying joint velocity
-        true_rates_list[i_trial] = stim_out[0] # underlying rates
-        no_stim_rates_list[i_trial] = stim_out[1] # rates sampled with and without stim
-        stim_rates_list[i_trial] = stim_out[2]
         stim_chan_list[i_trial,:] = temp_stim_chans # stim channels
-
-        # joint vels with and without stim
-        true_joint_vels_list[i_trial] = stim_out[4]
-        no_stim_joint_vels_list[i_trial] = stim_out[5]
-        stim_joint_vels_list[i_trial] = stim_out[6]
 
         # elbow and hand pos/vel with and without stim, also underlying rates
         true_point_kin_list.append(stim_out[7])
         no_stim_point_kin_list.append(stim_out[8])
         stim_point_kin_list.append(stim_out[9])
         
+        del stim_out
     
     # output metrics
-    return [joint_ang_0_list, true_rates_list, no_stim_rates_list, stim_rates_list, 
-                stim_chan_list,  true_joint_vels_list, no_stim_joint_vels_list, stim_joint_vels_list, 
-                true_point_kin_list, no_stim_point_kin_list, stim_point_kin_list]
+    return [stim_chan_list, true_point_kin_list, no_stim_point_kin_list, stim_point_kin_list]
 
 
-def compute_exp_metrics(stim_data):
-    # stim data contains:
+def compute_kin_metrics(stim_data, hand_vel_PDs, stim_start_idx, stim_end_idx, make_plots=False):
+   
+    
+    stim_chan_list = stim_data[0]
 
-
+    point_kin_true = stim_data[1]
+    point_kin_no = stim_data[2]
+    point_kin_stim = stim_data[3]
     
     
-    return 0
+    delta_vel_stim = np.zeros((len(point_kin_true),2,2)) # trial, hand/elbow, vel-x, vel-y
+    delta_vel_no = np.zeros_like(delta_vel_stim)
+    
+    delta_mag_stim = np.zeros((len(point_kin_true),2)) # trial, hand/elbow
+    delta_mag_no = np.zeros_like(delta_mag_stim)
+    
+    delta_dir_stim = np.zeros_like(delta_mag_stim)
+    delta_dir_no = np.zeros_like(delta_mag_stim)
+    pred_delta_dir = np.zeros((len(point_kin_true),))
+    
+    for i_trial in range(len(point_kin_true)): # each stim trial
+        # hand, get mean difference in velocity during stim
+        delta_vel_stim[i_trial,0] = np.mean(point_kin_stim[i_trial][1][stim_start_idx:stim_end_idx,1:3] - point_kin_true[i_trial][1][stim_start_idx:stim_end_idx,1:3],axis=0)
+        delta_vel_no[i_trial,0] = np.mean(point_kin_no[i_trial][1][stim_start_idx:stim_end_idx,1:3] - point_kin_true[i_trial][1][stim_start_idx:stim_end_idx,1:3],axis=0)
+        # elbow
+        delta_vel_stim[i_trial,1] = np.mean(point_kin_stim[i_trial][4][stim_start_idx:stim_end_idx,1:3] - point_kin_true[i_trial][4][stim_start_idx:stim_end_idx,1:3],axis=0)
+        delta_vel_no[i_trial,1] = np.mean(point_kin_no[i_trial][4][stim_start_idx:stim_end_idx,1:3] - point_kin_true[i_trial][4][stim_start_idx:stim_end_idx,1:3],axis=0)
+        
+        # compute magnitude
+        delta_mag_stim[i_trial,:] = np.linalg.norm(delta_vel_stim[i_trial,:])
+        delta_mag_no[i_trial,:] = np.linalg.norm(delta_vel_no[i_trial,:])
+        
+        # compute angle
+        delta_dir_stim[i_trial,:] = np.arctan2(delta_vel_stim[i_trial,:,1],delta_vel_stim[i_trial,:,0])
+        delta_dir_no[i_trial,:] = np.arctan2(delta_vel_no[i_trial,:,1],delta_vel_stim[i_trial,:,0])
+        
+        # get predicted stim dir
+        pred_delta_dir[i_trial] = sp.stats.circmean(hand_vel_PDs[stim_chan_list[i_trial].astype(int)],low=-np.pi, high=np.pi)
+        
+    
+    if(make_plots):
+        plt.figure()
+        plt.hist(delta_mag_stim[:,0]-delta_mag_no[:,0])
+        
+        plt.figure()
+        plt.hist(abs(vae_utils.circular_diff(delta_dir_stim[:,0],pred_delta_dir[:])))
+    
+    
+    return delta_vel_stim, delta_vel_no, delta_mag_stim, delta_mag_no, delta_dir_stim, delta_dir_no, pred_delta_dir
 
 
 
-
+def run_amp_stim_exp(input_data):
+    # run many stimulation trials for each amplitude, compute metrics for each amp, compare
+    # amp_list contains list of amplitudes to test
+    # hand_vel_PDs contains PDs
+    
+    stim_start_idx = np.round(input_data['stim_start_t']/gl.bin_size).astype(int)
+    stim_end_idx = stim_start_idx + np.ceil(input_data['n_pulses']/input_data['freq']/gl.bin_size).astype(int)
+    
+    metrics = []
+    for amp in input_data['amp_list']:
+        input_data['amp'] = amp
+        stim_exp_out=run_many_stim_trials(input_data)
+        metrics.append(compute_kin_metrics(stim_exp_out, input_data['hand_vel_PDs'], stim_start_idx, stim_end_idx, make_plots=False))
+    
+    
+    
+    
+    return metrics
+    
+    
 
 
 

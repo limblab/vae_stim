@@ -203,13 +203,18 @@ def get_PD_similarity(vae,joint_vels_norm,joint_angs):
     PD_sim_mat = cosine_similarity(hand_vel_params)
     return PD_sim_mat, hand_vel_PDs, hand_vel_params
     
+        
     
-
+def circular_diff(data_1, data_2):
     
+    diff = data_1 - data_2
     
+    max_diff = np.pi
     
+    diff[diff<-max_diff] = diff[diff<-max_diff] + 2*max_diff
+    diff[diff>max_diff] = diff[diff>max_diff] - 2*max_diff
     
-    
+    return diff
     
     
     

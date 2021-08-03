@@ -3,11 +3,17 @@
 Created on Mon Jul 19 10:11:15 2021
 
 @author: Joseph Sombeck
+
+
+THERE IS A MEMORY LEAK IN osim_analysis.run(). It's small because I don't reset the analysis variable, but be warned.
+
+
 """
 
 import opensim as osim
 import numpy as np
 import global_vars as gl
+
 
 def write_mot_file(data):
     # write .mot file with joint vel data for opensim
@@ -42,20 +48,12 @@ def write_mot_file(data):
     
 def run_osim_analysis():    
     # put joint vels through opensim
-    arm = osim.Model(gl.path_to_osim_model)
-    
-    osim_analysis = osim.AnalyzeTool(gl.path_to_analysis_file)
     motion = osim.Storage(gl.osim_dir + '\\' + gl.mot_fname)
+
+    gl.osim_analysis.setInitialTime(motion.getFirstTime())
+    gl.osim_analysis.setFinalTime(motion.getLastTime())
+    gl.osim_analysis.run()
     
-    osim_analysis.setInitialTime(motion.getFirstTime())
-    osim_analysis.setFinalTime(motion.getLastTime())
-    
-    osim_analysis.setModel(arm)
-    osim_analysis.setModelFilename(gl.path_to_osim_model)
-    osim_analysis.setCoordinatesFileName(gl.osim_dir + '\\' + gl.mot_fname)
-    osim_analysis.setLoadModelAndInput(True)
-    osim_analysis.setResultsDir(gl.osim_dir)
-    osim_analysis.run()
     
 def get_osim_pointkin_results():
     
