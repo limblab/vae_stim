@@ -3,11 +3,14 @@
 filename = 'Han_20160315_RW_CDS_001.mat';
 
 
-params.cont_signal_names = {'joint_ang','joint_vel','opensim_hand_pos','opensim_hand_vel','opensim_hand_acc','opensim_elbow_pos','opensim_elbow_vel','opensim_elbow_acc'};
+params.cont_signal_names = {'joint_ang','joint_vel',...
+    'opensim_hand_pos','opensim_hand_vel','opensim_hand_acc',...
+    'opensim_elbow_pos','opensim_elbow_vel','opensim_elbow_acc',...
+    'muscle_len','muscle_vel'};
 params.array_name = 'S1';
 td = loadTDfromCDS(['D:\Lab\Data\StimModel\cds\',filename] , params);
 
-smoothParams.signals = {'joint_vel'};
+smoothParams.signals = {'joint_vel','opensim_hand_vel','muscle_vel'};
 smoothParams.width = 0.10;
 smoothParams.calc_rate = false;
 td = smoothSignals(td,smoothParams);
@@ -25,69 +28,6 @@ for i_start = 1:numel(td.idx_startTime)
         during_rewarded_trial(td.idx_startTime(i_start):td.idx_endTime(i_start)) = 1;
     end 
 end
-
-
-%% load from .mat file
-
-filename = 'Han_20160315_RW_CDS_001.mat';
-pathname = 'D:\Lab\Data\StimModel';
-
-load([pathname filesep filename]);
-
-%% extract opensim signals
-opensim_sigs = {'joint_ang','joint_vel','opensim_hand_pos','opensim_hand_vel',...
-    'opensim_elbow_pos','opensim_elbow_vel'};
-
-joint_labels = {...
-        'shoulder_adduction',...
-        'shoulder_rotation',...
-        'shoulder_flexion',...
-        'elbow_flexion',...
-        'radial_pronation',...
-        'wrist_flexion',...
-        'wrist_abduction',...
-        };
-for i_sig = 1:length(opensim_sigs)
-    switch lower(opensim_sigs{i_sig})
-        case 'pos'
-            labels = {'x','y'};
-        case 'vel'
-            labels = {'vx','vy'};
-        case 'acc'
-            labels = {'ax','ay'};
-        case 'force'
-            labels = {'fx','fy','fz','mx','my','mz'};
-        case 'motor_control'
-            labels = {'MotorControlSho','MotorControlElb'};
-        case 'joint_ang'
-            labels = strcat(joint_labels,'_ang');
-        case 'joint_vel'
-            labels = strcat(joint_labels(),'_vel');
-        case 'opensim_hand_pos'
-            labels = strcat({'X','Y','Z'},{'_handPos'});
-        case 'opensim_hand_vel'
-            labels = strcat({'X','Y','Z'},{'_handVel'});
-        case 'opensim_hand_acc'
-            labels = strcat({'X','Y','Z'},{'_handAcc'});
-        case 'opensim_elbow_pos'
-            labels = strcat({'X','Y','Z'},{'_elbowPos'});
-        case 'opensim_elbow_vel'
-            labels = strcat({'X','Y','Z'},{'_elbowVel'});
-        case 'opensim_elbow_acc'
-            labels = strcat({'X','Y','Z'},{'_elbowAcc'});
-    end
-    
-    % get label idx in opensim_names
-    opensim_idx = [];
-    for i_label = 1:numel(labels)
-        opensim_idx(end+1) = find(strcmpi(td.joint,labels{i_label})==1);
-    end
-    
-    % extract data
-    td.(opensim_sigs{i_sig}) = td.opensim(:,opensim_idx);
-    
-end
-
 
 %% downsample vel to have a uniform movement distribution
 n_samps = ceil(length(td.opensim_hand_vel)*0.4);
@@ -111,8 +51,8 @@ histogram(ang_samp)
 
 %% set nan's as -10000 so that python code doesn't fail
 
-% td.joint_ang(any(isnan(td.ang),2),:) = [];
-% td.joint_vel(any(isnan(td.joint_vel),2),:) = [];
+td.joint_ang(any(isnan(td.ang),2),:) = [];
+td.joint_vel(any(isnan(td.joint_vel),2),:) = [];
 
 %% Extract joint_vel data in txt file
 joint_vel = td.joint_vel;
@@ -125,7 +65,29 @@ joint_vel_norm = (joint_vel-mu)./sigma;
 
 % writematrix(joint_vel, 'Han_20160325_RW_SmoothNormalizedJointVel_50ms.txt')
 %%
-dlmwrite([pathname,filesep,'Han_20160315_RW_RewardTrialMask_50ms.txt'],during_rewarded_trial,'delimiter',',','newline','pc')
+muscle_vel = td.muscle_vel;
+muscle_len = td.muscle_len;
+
+muscle_vel = fillmissing(muscle_vel,'constant',0);
+muscle_len = fillmissing(muscle_len,'constant',0);
+[~,mu,sigma] = zscore(muscle_vel);
+norm_muscle_vel = (muscle_vel(train_idx,:)-mu)./sigma;
+
+hand_vel = td.opensim_hand_vel;
+hand_vel = fillmissing(hand_vel,'constant',0);
+[~,mu,sigma] = zscore(hand_vel);
+norm_hand_vel = (hand_vel(train_idx,:)-mu)./sigma;
+hand_vel = hand_vel(train_idx,:);
+during_rewarded_trial_train = during_rewarded_trial(train_idx);
+
+joint_vel = td.joint_vel;
+joint_vel = fillmissing(joint_vel,'constant',0);
+[~,mu,sigma] = zscore(joint_vel);
+norm_joint_vel = (joint_vel(train_idx,:)-mu)./sigma;
+joint_vel = joint_vel(train_idx,:);
+joint_ang = td.joint_ang(train_idx,:);
+%%
+dlmwrite([pathname,filesep,'Han_20160315_RW_SmoothRawJointAng_uniformAngDist_50ms.txt'],joint_ang,'delimiter',',','newline','pc')
 
 
 

@@ -33,7 +33,7 @@ def vae_forward(vae, in_sig):
     out_sig = out_sig.detach().numpy()
     rates = rates.detach().numpy()
     
-    return out_sig,rates
+    return out_sig,rates/gl.bin_size
 
 def vae_get_rates(vae, in_sig,bin_size):
     # run encoder to get firing rates. Converts to Hz based on bin_size
@@ -42,12 +42,12 @@ def vae_get_rates(vae, in_sig,bin_size):
     rates = vae.encoder(in_sig)
     rates = rates.detach().numpy()
     
-    return rates/bin_size
+    return gl.rate_mult*rates/bin_size
 
 def sample_rates(rates):
     rates = torch.from_numpy(rates[:,:]).type(torch.FloatTensor)
-    posterior = torch.distributions.Poisson(rates*gl.params.params['n_samples'])
-    samples = posterior.sample()/gl.params.params['n_samples']
+    posterior = torch.distributions.Poisson(rates)
+    samples = posterior.sample()
     return samples.detach().numpy()
 
 
@@ -124,13 +124,17 @@ def visualize_activation_map(stim_rates, no_stim_rates, idx=1):
     no_stim_rates_map = convert_list_to_map(no_stim_rates,mapping)
     stim_rates_map = convert_list_to_map(stim_rates,mapping)
 
-    plt.figure()
     fig, ax = plt.subplots(1,3)
-    ax[0].imshow(no_stim_rates_map[:,:,idx])
-    ax[1].imshow(stim_rates_map[:,:,idx])
-    ax[2].imshow(stim_rates_map[:,:,idx]-no_stim_rates_map[:,:,idx])
+    x=ax[0].imshow(no_stim_rates_map[:,:,idx])
+    fig.colorbar(x,ax=ax[0])
     
-    return 0
+    x=ax[1].imshow(stim_rates_map[:,:,idx])
+    fig.colorbar(x,ax=ax[1])
+    
+    x=ax[2].imshow(stim_rates_map[:,:,idx]-no_stim_rates_map[:,:,idx])
+    fig.colorbar(x,ax=ax[2])
+    
+    return no_stim_rates_map, stim_rates_map
     
 def visualize_activation_dist(is_act, stim_chans, block_size):
     # visualize activation function (change in FR vs. distance)
@@ -147,8 +151,10 @@ def visualize_activation_dist(is_act, stim_chans, block_size):
     dist_to_stim = dist_to_stim.reshape(-1,)
     
     # bin neurons based on their distance to stim, get probability of activation for neurons in each distance bin
-    dist_edges = np.arange(0,10,0.1) 
+    dist_edges = np.arange(0,10,0.05) 
     bin_idx = np.digitize(dist_to_stim,dist_edges) # 0 corresponds to below the first bin, 1 is the first bin
+    bin_idx[bin_idx==0]=1
+    bin_idx = bin_idx-1
     prob_act_bin = np.zeros(dist_edges.shape[0] - 1)
     
     for i_bin in range(prob_act_bin.shape[0]):
@@ -177,11 +183,9 @@ def get_correlation_similarity(vae,joint_vels_norm):
     return corr_sim_mat
 
 
-def get_PD_similarity(vae,joint_vels_norm,joint_angs):
+def get_PD_similarity(vae,joint_vels_norm,hand_vels):
     rates = vae_get_rates(vae,joint_vels_norm,gl.bin_size)
-    point_kin = osim.get_pointkin(joint_angs)
-    hand_vels = point_kin[1][:,1:-1] # remove time column and z-axis
-        
+
     glm_in = hand_vels
     glm_in = sm.add_constant(glm_in,prepend=False)
     
@@ -203,7 +207,40 @@ def get_PD_similarity(vae,joint_vels_norm,joint_angs):
     PD_sim_mat = cosine_similarity(hand_vel_params)
     return PD_sim_mat, hand_vel_PDs, hand_vel_params
     
+def get_neighbor_sim(loc_map, sim_map, max_neigh_dist):
+    
+    # for each neuron, get similarity between it and it's neighbors
+    neigh_sim = np.zeros((loc_map.shape[0],))
+    
+    for i_unit in range(len(neigh_sim)):
+        dist_mat = euclidean_distances(loc_map[i_unit,:].reshape(1,-1), loc_map)
+        neigh_idx = np.argwhere(dist_mat <= max_neigh_dist)
+        sim_scores = sim_map[i_unit,neigh_idx]
+        neigh_sim[i_unit] = np.mean(sim_scores)
+    
+    return neigh_sim
         
+
+def get_pd_neighbor_dist(loc_map, pds, max_neigh_dist):
+    neigh_pd_diff = []
+    neigh_dist = []
+    non_neigh_pd_diff = []
+    non_neigh_dist = []
+    
+    for i_unit in range(len(loc_map)):
+        dists = euclidean_distances(loc_map[i_unit,:].reshape(1,-1),loc_map)
+        dists=dists.reshape(-1,)
+        angle_diffs = circular_diff(pds[i_unit],pds)
+        for j_unit in range(i_unit+1,len(loc_map)):
+            if(dists[j_unit]<=max_neigh_dist):
+                # is a neightbor
+                neigh_dist.append(dists[j_unit])
+                neigh_pd_diff.append(angle_diffs[j_unit])
+            else:
+                non_neigh_dist.append(dists[j_unit])
+                non_neigh_pd_diff.append(angle_diffs[j_unit])
+    
+    return neigh_pd_diff, neigh_dist, non_neigh_pd_diff, non_neigh_dist
     
 def circular_diff(data_1, data_2):
     
