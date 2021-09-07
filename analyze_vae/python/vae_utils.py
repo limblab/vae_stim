@@ -23,6 +23,11 @@ def load_vae_parameters(fpath, input_size):
     vae.load_state_dict(torch.load(fpath,map_location=torch.device('cpu')))
     return vae
 
+def vae_decoder(vae,samples,bin_size):
+    samples = torch.from_numpy(samples).type(torch.FloatTensor)
+    out_sig = vae.decoder(samples*bin_size/gl.rate_mult)
+    
+    return out_sig.detach().numpy()
 
 def vae_forward(vae, in_sig):
     # make sure to set eval mode so that we dont drop neurons out
@@ -204,8 +209,7 @@ def get_PD_similarity(vae,joint_vels_norm,hand_vels):
         hand_vel_params[i_unit,1] = res.params[1]
     
     
-    PD_sim_mat = cosine_similarity(hand_vel_params)
-    return PD_sim_mat, hand_vel_PDs, hand_vel_params
+    return hand_vel_PDs, hand_vel_params
     
 def get_neighbor_sim(loc_map, sim_map, max_neigh_dist):
     
@@ -254,9 +258,17 @@ def circular_diff(data_1, data_2):
     return diff
     
     
+def convert_loc_to_idx(locs, mapping):
+    idx_list = np.zeros((locs.shape[1],))
+    
+    for i in range(locs.shape[1]):
+        curr_loc = locs[:,i]
+        idx_list[i] = np.argwhere(np.all(curr_loc == mapping,1))
+        
+    return idx_list
     
     
-    
+
     
     
     

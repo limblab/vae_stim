@@ -123,10 +123,10 @@ def update_rates_stim(input_data, rates, is_act,bin_edges):
         num_act = np.sum(is_act[:,pulse_bin_idx==i_bin],axis=1)
         
         # set rates in bin to 0 if responsive at all
-        updated_rate[i_bin,np.argwhere(num_act>0)] = 0
+        #updated_rate[i_bin,np.argwhere(num_act>0)] = 0
         
         # lower rates in bin to account for inhibition
-        #updated_rate[i_bin,:] = updated_rate[i_bin,:] - np.multiply(updated_rate[i_bin,:],np.transpose(num_act*(0.01/gl.bin_size))) # remove 10 ms of data
+        updated_rate[i_bin,:] = updated_rate[i_bin,:] - np.multiply(updated_rate[i_bin,:],np.transpose(num_act*(0.01/gl.bin_size))) # remove 10 ms of data
         # then add spikes to rates based on number of times activated and bin size
         updated_rate[i_bin,:] = updated_rate[i_bin,:] + np.transpose(num_act)/gl.bin_size
     
@@ -202,9 +202,13 @@ def run_stim_trial(input_data):
             elbow_vel_true, elbow_vel_stim, elbow_vel_no]
         
     elif(input_data['kin'].lower() == 'hand'): # currently, this is not meant to be ran with run many stim trials as output of function is different than with joint
-        hand_vel_true = vae_utils.linear_dec_forward(dec=input_data['dec'],x=rates)
-        hand_vel_stim = vae_utils.linear_dec_forward(dec=input_data['dec'],x=samp_rates_stim)
-        hand_vel_no_stim = vae_utils.linear_dec_forward(dec=input_data['dec'],x=samp_rates)
+        kin_var_true = vae_utils.vae_decoder(vae=input_data['vae'],samples=rates,bin_size=gl.bin_size)
+        kin_var_stim = vae_utils.vae_decoder(vae=input_data['vae'],samples=samp_rates_stim,bin_size=gl.bin_size)
+        kin_var_no_stim = vae_utils.vae_decoder(vae=input_data['vae'],samples=samp_rates,bin_size=gl.bin_size)
+        
+        hand_vel_true = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_true)
+        hand_vel_stim = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_stim)
+        hand_vel_no_stim = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_no_stim)
         
         return [rates, samp_rates, samp_rates_stim, is_act, 
             hand_vel_true, hand_vel_stim, hand_vel_no_stim]
@@ -228,6 +232,8 @@ def run_many_stim_trials(input_data):
     # randomly chooses joint velocities for each trial  
 
     """
+    input_data['hand_vel_PDs'] = hand_vel_PDs
+
     input_data['amp'] = 100 # uA
     input_data['freq'] = 100 # Hz
     input_data['n_pulses'] = 10 # number of pulses.
@@ -247,7 +253,9 @@ def run_many_stim_trials(input_data):
     input_data['n_stim_chans'] = 1
     
     input_data['sim_mat'] = PD_sim_mat
-    input_data['sim_tol'] = 0.92; # corresponds to 22.5 degrees
+    input_data['PD_tol'] = 0.92; # corresponds to 22.5 degrees
+    
+    input_data['stim_chan_mask'] : mask of channels that can be used
     """
     
     # initilize useful variables
@@ -266,17 +274,28 @@ def run_many_stim_trials(input_data):
     no_elbow_vel_list = []
     stim_elbow_vel_list = []
     
+    # get channel sampling weight based on PD distribution
     
+    bin_counts, bin_edges = np.histogram(input_data['hand_vel_PDs'],bins=20,range=(-np.pi,np.pi))  
+    bin_idx = np.digitize(input_data['hand_vel_PDs'],bins=bin_edges)
+    bin_idx = bin_idx-1
+    
+    choice_p = 1/(bin_counts[bin_idx]/np.sum(bin_counts))
+    choice_p[input_data['stim_chan_mask']==0] = 0 # only look at good chans
+    
+    choice_p = choice_p/np.sum(choice_p)
     # iterate through each trial
     for i_trial in range(input_data['n_trials']):
         # get stim chan(s)
-        # get initial stim_chan randomly
-        temp_stim_chans = np.array([np.random.randint(0,n_neurons)])
+        # get initial stim_chan randomly -- sample based on PD distribution to get uniform PD sampling
         
+        temp_stim_chans = np.array([np.random.choice(n_neurons,p=choice_p)])
+        ang_diff = np.abs(vae_utils.circular_diff(input_data['hand_vel_PDs'][temp_stim_chans],input_data['hand_vel_PDs']))
+        ang_diff[input_data['stim_chan_mask']==0]=1000
         if(input_data['n_stim_chans']>1): # this only adds stimulation channels if doing multi-elec stim
             # get a random channel that is sufficiently similar to the original (temp_stim_chans[0])
             # sim scores in input_data['sim_mat'][temp_stim_chans[0],:]
-            good_chans = np.reshape(np.argwhere(input_data['sim_mat'][temp_stim_chans] > input_data['sim_tol']),(-1,))
+            good_chans = np.reshape(np.argwhere(ang_diff <= input_data['PD_tol']),(-1,))
             temp_stim_chans = np.append(temp_stim_chans, np.random.choice(good_chans,size=input_data['n_stim_chans']-1,replace=False))
             
         
@@ -393,6 +412,7 @@ def run_elec_amp_stim_exp(input_data):
     stim_start_idx = np.round(input_data['stim_start_t']/gl.bin_size).astype(int)
     stim_end_idx = stim_start_idx + np.ceil(input_data['n_pulses']/input_data['freq']/gl.bin_size).astype(int)
     
+    input_data['stim_chan_mask'] = np.ones_like(input_data['hand_vel_PDs'])
     metrics = []
     n_list = []
     a_list = []
@@ -408,7 +428,7 @@ def run_elec_amp_stim_exp(input_data):
             a_list.append(amp)
     
     
-    return metrics, n_list, a_list
+    return metrics, n_list, a_list,stim_exp_out
 
 
 
@@ -420,6 +440,7 @@ def run_amp_freq_stim_exp(input_data):
     # hand_vel_PDs contains PDs
     
     stim_start_idx = np.round(input_data['stim_start_t']/gl.bin_size).astype(int)
+    input_data['stim_chan_mask'] = np.ones_like(input_data['hand_vel_PDs'])
     
     metrics = []
     freq_list = []
@@ -449,16 +470,59 @@ def run_amp_high_sim_exp(input_data):
     
     metrics = []
     a_list = []
+    step_list = []
+    stim_chan_list = []
     
-    for amp in input_data['amp_list']:
-        print(amp)
-        input_data['amp'] = amp
-        stim_exp_out=run_many_stim_trials(input_data)
-        metrics.append(compute_kin_metrics(stim_exp_out, input_data['hand_vel_PDs'], stim_start_idx, stim_end_idx, make_plots=False))
-        a_list.append(amp)
+    for step in input_data['step_list']:
+        print(step)
+        # get acceptable stim channels
+        good_chans = np.argwhere(input_data['sim_score'] > input_data['sim_tol']).reshape(-1,)
+        good_locs = input_data['map_data'][good_chans,:]
+        # take a step of size step in random dir (N, E, S, W) from these good chans
+        use_locs = good_locs
+        
+        for i_loc in range(len(good_locs)):
+            i_dir = np.random.choice(4)
+            temp_loc = good_locs[i_loc,:]
+            if(i_dir==0): # N 
+                if(temp_loc[1]-step >= 0):
+                    temp_loc[1] = temp_loc[1]-step
+                else:
+                    temp_loc[1] = temp_loc[1]+step
+            if(i_dir==1): # E
+                if(temp_loc[0]+step < np.sqrt(input_data['map_data'].shape[0])):
+                    temp_loc[0] = temp_loc[0]+step
+                else:
+                    temp_loc[0] = temp_loc[0]-step
+            if(i_dir==2): # S
+                if(temp_loc[1]+step < np.sqrt(input_data['map_data'].shape[0])):
+                    temp_loc[1] = temp_loc[1]+step
+                else:
+                    temp_loc[1] = temp_loc[1]-step
+            if(i_dir==3): # W
+                if(temp_loc[0]-step >= 0):
+                    temp_loc[0] = temp_loc[0]-step
+                else:
+                    temp_loc[0] = temp_loc[0]+step
+            use_locs[i_loc] = temp_loc
+        
+
+        use_chans = vae_utils.convert_loc_to_idx(np.transpose(use_locs),input_data['map_data'])
+        # update stim chan mask 
+        input_data['stim_chan_mask'] = np.zeros_like(input_data['hand_vel_PDs'])
+        input_data['stim_chan_mask'][use_chans.astype(int)] = 1
+        
+        
+        for amp in input_data['amp_list']:
+            input_data['amp'] = amp
+            stim_exp_out=run_many_stim_trials(input_data)
+            metrics.append(compute_kin_metrics(stim_exp_out, input_data['hand_vel_PDs'], stim_start_idx, stim_end_idx, make_plots=False))
+            a_list.append(amp)
+            step_list.append(step)
+            stim_chan_list.append(stim_exp_out[0])
     
     
-    return metrics, a_list
+    return metrics, a_list, step_list, stim_chan_list
 
 
 

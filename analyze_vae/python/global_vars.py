@@ -80,5 +80,5 @@ def global_vars():
     karth_dist = np.genfromtxt(r'D:\Lab\GIT\vae_stim\analyze_biophysical_mdl\distance_bins.txt',delimiter=',')
     karth_amp = np.genfromtxt(r'D:\Lab\GIT\vae_stim\analyze_biophysical_mdl\amplitude.txt',delimiter=',')
     
-    rate_mult = 1
+    rate_mult = 10
     
