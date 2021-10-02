@@ -19,13 +19,25 @@ import scipy as sp
 
 from sklearn.metrics.pairwise import cosine_similarity
 
+import seaborn as sns
+ 
 import pickle
 import datetime
 import torch
 %matplotlib qt
+
+from matplotlib.ticker import (MultipleLocator, AutoMinorLocator)
+#%% set global plot style
+sns.set_style('ticks') # darkgrid, white grid, dark, white and ticks
+plt.rc('axes', titlesize=18)     # fontsize of the axes title
+plt.rc('axes', labelsize=16)    # fontsize of the x and y labels
+plt.rc('xtick', labelsize=14)    # fontsize of the tick labels
+plt.rc('ytick', labelsize=14)    # fontsize of the tick labels
+plt.rc('legend', fontsize=14)    # legend fontsize
+plt.rc('font', size=14)          # controls default text sizes
 #%% load in pretrained model and joint velocity data, both normalized and raw
 # get project folder, file with vae_params and training parameters
-project_folder = r'D:\Lab\Data\StimModel\models\Han_20160315_RW_2021-09-07-184542'
+project_folder = r'D:\Lab\Data\StimModel\models\Han_20160315_RW_2021-05-12-210801'
 training_data_folder = r'D:\Lab\Data\StimModel\training_data'
 path_to_model_dict = glob.glob(project_folder + r'\*model_params*')[0]
 path_to_model_yaml = glob.glob(project_folder + r'\*.yaml')[0]
@@ -111,7 +123,7 @@ else:
 #%% visualize PDs
 mapping = mdl.locmap().astype(int)
 PD_map = vae_utils.convert_list_to_map(hand_vel_PDs.reshape(1,-1),mapping)
-
+PD_map = PD_map*180/np.pi
 PD_hist, PD_bin_edges = np.histogram(hand_vel_PDs)
 
 PD_bin_centers = PD_bin_edges[0:-1] + np.mean(np.diff(PD_bin_edges))/2
@@ -123,7 +135,7 @@ plt.bar(x=PD_bin_centers,
         width=2*np.pi/len(PD_bin_centers))
 
 plt.figure()
-plt.imshow(PD_map[:,:,0])
+plt.imshow(PD_map[:,:,0],cmap='twilight',interpolation='none')
 plt.colorbar()
 #%% compare PD and hand-vel-decoder direction
 #%% ONLY MAKES SENSE IF VAE DECODES HAND VELS
@@ -136,43 +148,126 @@ plt.figure()
 plt.hist(vae_utils.circular_diff(dec_dir,hand_vel_PDs),20)
 
 
-
-#%% get PD similarity vs. distance for neurons on and not-on the same electrode
-neigh_pd_diff, neigh_dist, non_neigh_pd_diff, non_neigh_dist = vae_utils.get_pd_neighbor_dist(mdl.locmap(), hand_vel_PDs, max_neigh_dist=3) # in blocks
-
-
-plt.figure()
-plt.hist(np.abs(non_neigh_pd_diff))
-plt.figure()
-plt.hist(np.abs(neigh_pd_diff),density=True)
-
-#%% run experiments for multiple amplitudes and number of electrodes
+#%% stimulate the same location(s) many times and measure effect
 input_data = {}
 input_data['kin'] = 'hand';
 input_data['dec'] = dec
 
 input_data['amp_list'] = [0,5,10,15,20,40,80] # uA
-#input_data['amp_list'] = [0,1,2,3,4,5]
+#input_data['amp_list'] = [0,10,20]
 input_data['hand_vel_PDs'] = hand_vel_PDs
 
-input_data['freq'] = 100 # Hz
-input_data['n_pulses'] = 20 
+input_data['freq'] = 200 # Hz
+input_data['n_pulses'] = 40 
 input_data['stim_start_t'] = gl.bin_size; # equivalent to 1 bin.
 input_data['dir_func'] = 'bio_mdl'
+input_data['decay_prob'] = 1
 input_data['trans_func'] = 'none'
 input_data['vae'] = vae
 input_data['all_joint_vel_norm'] = kin_var_norm
 input_data['all_joint_ang'] = joint_angs
 input_data['map_data'] = mdl.locmap()
-input_data['block_size'] = 0.067 # mm
+input_data['block_size'] = 0.05 # mm
 
 input_data['joint_vel'] = joint_vels
-input_data['n_trials'] = 200
-input_data['n_stim_chans_list'] = [1,4]
+input_data['n_trials'] = 250
+input_data['n_stim_chans'] = 1 # please don't change to more, I'm not sure if it works....
+input_data['n_sets'] = 6
 
 input_data['PD_tol'] = np.pi/8
 
-amp_elec_exp_out, n_chans, amp, stim_exp_out = stim_exp_utils.run_elec_amp_stim_exp(input_data)
+single_loc_exp, loc_idx, amp, stim_exp_out = stim_exp_utils.run_single_location_exp(input_data)
+
+exp_fname = 'single_loc_exp'
+
+#%% save data
+x=datetime.datetime.now()
+dname = '_ratemult' + str(gl.rate_mult) + '_nchans' + str(input_data['n_stim_chans']) + '_' + x.strftime("%G")+'-'+x.strftime("%m")+'-'+x.strftime("%d")+'-'+x.strftime("%H")+x.strftime("%M")+x.strftime("%S")
+fname = project_folder+'\\'+exp_fname+dname+'.pkl'
+f=open(fname,'wb')
+pickle.dump([single_loc_exp,loc_idx,amp,input_data],f)
+f.close()
+
+#%% magnitude of effect, error bars across trials of the same location
+
+plt.figure(figsize=(5,5))
+act_hand_vel_mag = np.linalg.norm(hand_vels,ord=2,axis=1)
+max_hand_vel_mag = np.percentile(act_hand_vel_mag,95)
+
+mean_mag = np.zeros((input_data['n_sets'],len(input_data['amp_list'])))
+std_mag = np.zeros_like(mean_mag)
+offset = [-1,-0.5,0,0.5,1]*1
+
+idx_look = 0
+for i_set in range(input_data['n_sets']):
+    for i_amp in range(len(input_data['amp_list'])):
+        delta_mag_stim = single_loc_exp[idx_look][1]
+        data = delta_mag_stim[:,0]/max_hand_vel_mag*100
+        mean_mag[i_set,i_amp] = np.mean(data)
+        std_mag[i_set,i_amp] = np.std(data)
+        idx_look=idx_look+1
+    plt.errorbar(np.array(input_data['amp_list'])+offset[i_set],mean_mag[i_set,:], std_mag[i_set,:], capsize=5,elinewidth=2)#, \
+                     #color=colors[i_set], linestyle=ls, marker=m, markersize=ms,linewidth=2)
+
+plt.xlim([-5,85])
+plt.xticks(ticks=np.arange(0,85,10))
+sns.despine()
+
+plt.xlabel('Amplitude (' + u"\u03bcA" + ')')     
+plt.ylabel('Magnitude (% max speed)')
+#%% angular error
+
+# histogram summary
+plt.figure(figsize=(6,5))
+
+mean_err = np.zeros((input_data['n_sets'],len(input_data['amp_list'])))
+std_err = np.zeros_like(mean_mag)
+offset = [-1,-0.5,0,0.5,1]*1
+idx_look = 0
+for i_set in range(input_data['n_sets']):
+    for i_amp in range(len(input_data['amp_list'])):
+        delta_dir_stim = single_loc_exp[idx_look][-2]
+        pred_delta_dir = single_loc_exp[idx_look][-1]
+        error_all = abs(vae_utils.circular_diff(delta_dir_stim[:,0],pred_delta_dir[:]))*180/np.pi
+        mean_err[i_set,i_amp] = np.mean(error_all)
+        std_err[i_set,i_amp] = np.std(error_all)
+        idx_look=idx_look+1
+    plt.errorbar(np.array(input_data['amp_list'])+offset[i_set],mean_err[i_set,:], std_err[i_set,:], capsize=5,elinewidth=2)#, \
+                     #color=colors[i_set], linestyle=ls, marker=m, markersize=ms,linewidth=2)
+plt.xlim([-5,85])
+plt.ylim([0,180])
+sns.despine()
+
+plt.xlabel('Amplitude (' + u"\u03bcA" + ')')     
+plt.ylabel('Mean angular error (deg)')
+#%% run experiments for multiple amplitudes and number of electrodes
+input_data = {}
+input_data['kin'] = 'hand';
+input_data['dec'] = dec
+
+#input_data['amp_list'] = [0,5,10,15,20,40,80] # uA
+input_data['amp_list'] = [0,5,10,15,20,40,80]
+input_data['hand_vel_PDs'] = hand_vel_PDs
+
+input_data['freq'] = 200 # Hz
+input_data['n_pulses'] = 40 
+input_data['stim_start_t'] = gl.bin_size; # equivalent to 1 bin.
+input_data['dir_func'] = 'bio_mdl'
+input_data['decay_prob'] = 1
+input_data['trans_func'] = 'none'
+input_data['vae'] = vae
+input_data['all_joint_vel_norm'] = kin_var_norm
+input_data['all_joint_ang'] = joint_angs
+input_data['map_data'] = mdl.locmap()
+input_data['block_size'] = 0.05 # mm
+
+input_data['joint_vel'] = joint_vels
+input_data['n_trials'] = 1000
+input_data['n_stim_chans_list'] = [1]
+
+input_data['PD_tol'] = np.pi/8
+
+amp_elec_exp_out, n_chans, amp, stim_exp_out, stim_chan_list = stim_exp_utils.run_elec_amp_stim_exp(input_data)
 
 exp_fname = 'amp_elec_exp'
 
@@ -181,11 +276,11 @@ x=datetime.datetime.now()
 dname = '_ratemult' + str(gl.rate_mult) + '_' + x.strftime("%G")+'-'+x.strftime("%m")+'-'+x.strftime("%d")+'-'+x.strftime("%H")+x.strftime("%M")+x.strftime("%S")
 fname = project_folder+'\\'+exp_fname+dname+'.pkl'
 f=open(fname,'wb')
-pickle.dump([amp_elec_exp_out,n_chans,amp,input_data],f)
+pickle.dump([amp_elec_exp_out,n_chans,amp,input_data, stim_chan_list],f)
 f.close()
 
 #%% load data (assuming a break)
-fname = project_folder+'\\amp_elec_exp_ratemult10_2021-09-02-141425.pkl'
+fname = project_folder+'\\amp_elec_exp_ratemult10_2021-09-18-124701.pkl'
 f=open(fname,'rb')
 temp = pickle.load(f)
 f.close()
@@ -194,11 +289,14 @@ amp_elec_exp_out = temp[0]
 n_chans = temp[1]
 amp = temp[2]
 input_data = temp[3]
+stim_chan_list = temp[4]
 
 #%% compare metrics across amps and plot
 # amp_elec_exp_out: For each condition: delta_vel_stim, delta_mag_stim, delta_dir_stim, pred_delta_dir
 
 plt.figure()
+act_hand_vel_mag = np.linalg.norm(hand_vels,ord=2,axis=1)
+max_hand_vel_mag = np.percentile(act_hand_vel_mag,95)
 
 data_to_plot = []
 pos_to_plot = []
@@ -206,7 +304,7 @@ idx_look = 0
 for i_chan in range(len(input_data['n_stim_chans_list'])):
     for i_amp in range(len(input_data['amp_list'])):
         delta_mag_stim = amp_elec_exp_out[idx_look][1]
-        data_to_plot.append(delta_mag_stim[:,0])
+        data_to_plot.append(delta_mag_stim[:,0]/max_hand_vel_mag*100)
         pos_to_plot.append(input_data['amp_list'][i_amp]+i_chan)#-len(input_data['n_stim_chans_list'])/2)
         idx_look=idx_look+1
         
@@ -214,7 +312,7 @@ plt.boxplot(data_to_plot,positions=pos_to_plot,widths=1)
 
 
 plt.xlabel('Amplitude')
-plt.ylabel('Change in hand vel magnitude')
+plt.ylabel('Magnitude (% max speed)')
 
 
 # histogram summary
@@ -264,27 +362,27 @@ plt.xlabel('Amplitude')
 plt.ylabel('Proportion of trials within 90 deg of prediction')            
 plt.legend(['1 chan','4 chan'])
 
-
-
 #%% run experiments comparing effect of amplitude and frequency
 input_data = {}
 input_data['kin'] = 'hand';
 input_data['dec'] = dec
 
-input_data['amp_list'] = [0,5,10,20,40,80] # uA
-input_data['freq_list'] = [50,100,200,500] # Hz
+input_data['amp_list'] = [0,5,10,15,20,40,80] # uA
+input_data['freq_list'] = [200] # Hz
 
 input_data['hand_vel_PDs'] = hand_vel_PDs
 
-input_data['n_pulses_list'] = [10,20,40,100]
+input_data['n_pulses_list'] = [40]
 input_data['stim_start_t'] = gl.bin_size; # equivalent to 1 bin.
 input_data['dir_func'] = 'bio_mdl'
+input_data['decay_prob'] = 1
+
 input_data['trans_func'] = 'none'
 input_data['vae'] = vae
 input_data['all_joint_vel_norm'] = kin_var_norm
 input_data['all_joint_ang'] = joint_angs
 input_data['map_data'] = mdl.locmap()
-input_data['block_size'] = 0.067 # mm
+input_data['block_size'] = 0.05 # mm
 
 input_data['joint_vel'] = joint_vels
 input_data['n_trials'] = 1000
@@ -295,17 +393,19 @@ input_data['PD_tol'] = np.pi/8
 amp_freq_exp_out, freq, amp = stim_exp_utils.run_amp_freq_stim_exp(input_data)
 
 exp_fname = 'amp_freq_exp'
+act_hand_vel_mag = np.linalg.norm(hand_vels,ord=2,axis=1)
+max_hand_vel_mag = np.percentile(act_hand_vel_mag,95)
 
 #%% save data
 x=datetime.datetime.now()
-dname = '_ratemult' + str(gl.rate_mult) + '_' + x.strftime("%G")+'-'+x.strftime("%m")+'-'+x.strftime("%d")+'-'+x.strftime("%H")+x.strftime("%M")+x.strftime("%S")
+dname = '_ratemult' + str(gl.rate_mult) + '_nchans' + str(input_data['n_stim_chans']) + '_' + x.strftime("%G")+'-'+x.strftime("%m")+'-'+x.strftime("%d")+'-'+x.strftime("%H")+x.strftime("%M")+x.strftime("%S")
 fname = project_folder+'\\'+exp_fname+dname+'.pkl'
 f=open(fname,'wb')
 pickle.dump([amp_freq_exp_out,freq,amp,input_data],f)
 f.close()
 
 #%% load data
-fname = project_folder+'\\amp_freq_exp_2021-09-01-143356.pkl'
+fname = project_folder+'\\amp_freq_exp_ratemult10_nchans4_2021-09-16-131217.pkl'
 f=open(fname,'rb')
 temp = pickle.load(f)
 f.close()
@@ -315,58 +415,72 @@ freq = temp[1]
 amp = temp[2]
 input_data = temp[3]
 
+act_hand_vel_mag = np.linalg.norm(hand_vels,ord=2,axis=1)
+max_hand_vel_mag = np.percentile(act_hand_vel_mag,95)
+
 #%% compare metrics across amps and plot
 # amp_elec_exp_out: For each condition: delta_vel_stim, delta_mag_stim, delta_dir_stim, pred_delta_dir
 
-plt.figure()
-
-data_to_plot = []
-pos_to_plot = []
+plt.figure(figsize=(5,5))
+offset = [-0.2,0,0.2]
 idx_look = 0
+colors = plt.cm.inferno([0,80,160])
+
 for i_freq in range(len(input_data['freq_list'])):
+    data_to_plot = []
+    pos_to_plot = []
+    err_to_plot = []
     for i_amp in range(len(input_data['amp_list'])):
-        delta_mag_stim = amp_freq_exp_out[idx_look][1]
-        data_to_plot.append(delta_mag_stim[:,0])
-        pos_to_plot.append(input_data['amp_list'][i_amp]+i_freq-len(input_data['freq_list'])/2)
+        delta_mag_stim = amp_freq_exp_out[idx_look][1]/max_hand_vel_mag*100
+        mean_mag_stim = np.mean(delta_mag_stim)
+        std_mag_stim = np.std(delta_mag_stim)
+        data_to_plot.append(mean_mag_stim)
+        err_to_plot.append(std_mag_stim)
+        pos_to_plot.append(input_data['amp_list'][i_amp] + offset[i_freq])
         idx_look=idx_look+1
         
-plt.boxplot(data_to_plot,positions=pos_to_plot,widths=1)
+    plt.errorbar(pos_to_plot,data_to_plot,err_to_plot,color=colors[i_freq,:])
 
-
+#plt.legend(['50Hz','100Hz','200Hz'],loc='upper left')
+plt.legend(['100 Hz'],loc='upper left')
 plt.xlabel('Amplitude')
-plt.ylabel('Stim effect mag')
+plt.ylabel('Magnitude (% high speed)')
+sns.despine()
 
-
-# histogram summary
-plt.figure()
+#%% histogram summary
+plt.figure(figsize=(6,5))
 bin_edges = np.arange(0,np.pi,np.pi/10)
 
-colors = plt.cm.inferno([0,50,100,150,200,250])
-ls = ['solid','dashed','dotted','solid']
-m = ['.','s','v','^']
+colors = plt.cm.inferno([0,40,80,120,160,200,240])
+
+ls = ['solid','dashed','dotted']
+m = ['.','s','v']
 
 idx_look = 0
-for i_freq in range(len(input_data['freq_list'])):
+for i_freq in range(1):#range(len(input_data['freq_list'])):
     for i_amp in range(len(input_data['amp_list'])):
-        delta_dir_stim = amp_freq_exp_out[idx_look][-2]
-        pred_delta_dir = amp_freq_exp_out[idx_look][-1]
-    
-        hist_vals,edges = np.histogram(abs(vae_utils.circular_diff(delta_dir_stim[:,0],pred_delta_dir[:])),bin_edges)
-        plt.plot((bin_edges[0:-1]+np.mean(np.diff(bin_edges))/2)*180/np.pi,hist_vals/delta_dir_stim.shape[0],color=colors[i_amp],linestyle=ls[i_freq],marker=m[i_freq],markersize=12)
+        if(i_amp in [0,1,2,4,6]):
+            delta_dir_stim = amp_freq_exp_out[idx_look][-2]
+            pred_delta_dir = amp_freq_exp_out[idx_look][-1]
+        
+            hist_vals,edges = np.histogram(abs(vae_utils.circular_diff(delta_dir_stim[:,0],pred_delta_dir[:])),bin_edges)
+            plt.plot((bin_edges[0:-1]+np.mean(np.diff(bin_edges))/2)*180/np.pi,hist_vals/delta_dir_stim.shape[0],color=colors[i_amp],linestyle=ls[i_freq],marker=m[i_freq],markersize=12)
         idx_look = idx_look+1
     
 plt.xlim((0,180))
+#plt.ylim([0,0.15])
 plt.xlabel('Actual - Predicted Dir (deg)')
 plt.ylabel('Proportion of trials')    
-plt.legend(['0uA','5uA','10uA','20uA','40uA','80uA'])
-
+plt.legend(['0uA','5uA','10uA','20uA','80uA'],loc='lower left')
+sns.despine()
+#%% histogram summary -- only look at angle
 # proportion of trials within some bound for different amplitudes (each line is a number of channels)
 ang_thresh = np.pi/2;
 
 prop_below_thresh = np.zeros((len(input_data['freq_list']),len(input_data['amp_list'])))
 idx_look = 0
-plt.figure()
-colors = plt.cm.inferno([0,50,100,150,200,250])
+plt.figure(figsize=(6,5))
+colors = plt.cm.inferno([0,40,80,120,160,200,240])
 
 for i_freq in range(len(input_data['freq_list'])):
     for i_amp in range(len(input_data['amp_list'])):
@@ -378,8 +492,123 @@ for i_freq in range(len(input_data['freq_list'])):
     plt.plot(input_data['amp_list'],prop_below_thresh[i_freq,:],color=colors[i_freq])
     
 plt.xlabel('Amplitude')
+plt.ylabel('Proportion predicted')            
+#plt.legend(['50 Hz','100 Hz','200 Hz','500 Hz'])
+plt.legend(['100 Hz'])
+sns.despine()
+#%% histogram summary -- require some minimum length
+# proportion of trials within some bound for different amplitudes (each line is a number of channels)
+ang_thresh = np.pi/2;
+idx_base = [0,len(input_data['amp_list']),2*len(input_data['amp_list'])]
+delta_mag_base = np.array([])
+for i in idx_base:
+    delta_mag_base_temp = amp_freq_exp_out[i][1][:,0]/max_hand_vel_mag*100
+    delta_mag_base = np.append(delta_mag_base,delta_mag_base_temp)
+
+min_mag = np.percentile(delta_mag_base,95)
+
+prop_below_thresh = np.zeros((len(input_data['freq_list']),len(input_data['amp_list'])))
+prop_above_min_mag = np.zeros_like(prop_below_thresh)
+idx_look = 0
+plt.figure(figsize=(6,5))
+colors = plt.cm.inferno([0,80,160])
+
+
+for i_freq in range(len(input_data['freq_list'])):
+    for i_amp in range(len(input_data['amp_list'])):
+        delta_dir_stim = amp_freq_exp_out[idx_look][-2]
+        pred_delta_dir = amp_freq_exp_out[idx_look][-1]
+        delta_mag_stim = amp_freq_exp_out[idx_look][1][:,0]/max_hand_vel_mag*100        
+        ang_diff = abs(vae_utils.circular_diff(delta_dir_stim[:,0],pred_delta_dir[:]))
+        prop_above_min_mag[i_freq,i_amp] = np.sum(delta_mag_stim >= min_mag)/len(delta_mag_stim) # 1-prop no effect
+        ang_diff[delta_mag_stim < min_mag] = 1000
+        
+        prop_below_thresh[i_freq,i_amp] = np.sum(ang_diff<ang_thresh)/len(ang_diff)
+        #prop_below_thresh[i_freq,i_amp] = np.sum(ang_diff<ang_thresh)/len(ang_diff) # proportion predictable
+        idx_look = idx_look+1
+    plt.plot(input_data['amp_list'],prop_above_min_mag[i_freq,:]+prop_below_thresh[i_freq,:],color=colors[i_freq],linestyle='-')
+    #plt.plot(input_data['amp_list'],0.5*(prop_above_min_mag[i_freq,:]),color=colors[i_freq],linestyle='--')
+    
+plt.xlabel('Amplitude')
 plt.ylabel('Proportion of trials within 90 deg of prediction')            
 plt.legend(['50 Hz','100 Hz','200 Hz','500 Hz'])
+
+#%% histogram summary -- project onto PD, require some minimum length
+# proportion of trials within some bound for different amplitudes (each line is a number of channels)
+ang_thresh = np.pi/2;
+idx_base = 0
+delta_mag_base = amp_freq_exp_out[idx_base][1][:,0]/max_hand_vel_mag*100
+delta_dir_stim = amp_freq_exp_out[idx_base][-2]
+pred_delta_dir = amp_freq_exp_out[idx_base][-1]
+proj_val = delta_mag_base*np.cos(abs(vae_utils.circular_diff(delta_dir_stim[:,0],pred_delta_dir[:])))
+min_proj = np.percentile(proj_val,95)
+
+prop_below_thresh = np.zeros((len(input_data['freq_list']),len(input_data['amp_list'])))
+
+idx_look = 0
+plt.figure()
+colors = plt.cm.inferno([0,40,80,120,160,200,240])
+
+for i_freq in range(len(input_data['freq_list'])):
+    for i_amp in range(len(input_data['amp_list'])):
+        delta_mag_stim = amp_freq_exp_out[idx_look][1][:,0]/max_hand_vel_mag*100
+        delta_dir_stim = amp_freq_exp_out[idx_look][-2]
+        pred_delta_dir = amp_freq_exp_out[idx_look][-1]
+        
+        ang_diff = abs(vae_utils.circular_diff(delta_dir_stim[:,0],pred_delta_dir[:]))
+        proj_val = delta_mag_stim*np.cos(ang_diff)
+
+        
+        prop_below_thresh[i_freq,i_amp] = np.sum(proj_val > min_proj)/len(ang_diff)
+        idx_look = idx_look+1
+    plt.plot(input_data['amp_list'],prop_below_thresh[i_freq,:],color=colors[i_freq])
+    
+plt.xlabel('Amplitude')
+plt.ylabel('Proportion of trials within 90 deg of prediction')            
+plt.legend(['50 Hz','100 Hz','200 Hz','500 Hz'])
+
+#%% plot magnitude vs angular error for each
+
+idx_look = 16
+print(freq[idx_look],amp[idx_look])
+delta_dir_stim = amp_freq_exp_out[idx_look][-2]
+pred_delta_dir = amp_freq_exp_out[idx_look][-1]
+delta_mag_stim = amp_freq_exp_out[idx_look][1]/max_hand_vel_mag*100
+ang_err = abs(vae_utils.circular_diff(delta_dir_stim[:,0],pred_delta_dir[:]))
+        
+plt.figure()
+plt.plot(ang_err,delta_mag_stim,'.')
+
+#%% something about a detection threshold
+# compare delta-vel-mag for same trials. Use 0 amp as base. 
+idx_look = 0
+delta_mag_stim_0 = amp_freq_exp_out[0][1]
+plt.figure()
+ax = plt.axes()
+colors = plt.cm.inferno([0,80,160])
+
+for i_freq in range(len(input_data['freq_list'])):
+    pos_to_plot = []
+    data_to_plot = []
+    for i_amp in range(len(input_data['amp_list'])):
+        delta_mag_stim = amp_freq_exp_out[idx_look][1]
+        mag_diff = (delta_mag_stim[:,0]-delta_mag_stim_0[:,0])/max_hand_vel_mag*100
+        data_to_plot.append(np.sum(mag_diff > 0)/len(mag_diff))
+        pos_to_plot.append(input_data['amp_list'][i_amp])#-len(input_data['n_stim_chans_list'])/2)
+        idx_look=idx_look+1
+
+    plt.plot(pos_to_plot[1:],data_to_plot[1:],color=colors[i_freq])
+
+
+plt.xlim([0,100])
+plt.ylim([0.4,1.0])
+plt.xticks(ticks=np.arange(0,110,10))
+plt.yticks(ticks=np.arange(0.4,1.1,0.1))
+ax.xaxis.set_minor_locator(MultipleLocator(5))
+ax.yaxis.set_minor_locator(MultipleLocator(0.05))
+
+sns.despine()
+            
 
 #%% run single electrode experiment where we pick locations with high neighbor similarity
 
@@ -388,6 +617,7 @@ PD_sim_mat = (np.pi - np.abs(vae_utils.circular_diff(hand_vel_PDs.reshape(1,-1),
 neigh_sim = vae_utils.get_neighbor_sim(mdl.locmap(), PD_sim_mat, max_neigh_dist=3)
 neigh_map = vae_utils.convert_list_to_map(neigh_sim.reshape(1,-1),mdl.locmap().astype(int))
 
+plt.figure()
 plt.imshow(neigh_map[:,:,0])
 
 #%%
@@ -395,8 +625,8 @@ input_data = {}
 input_data['kin'] = 'hand';
 input_data['dec'] = dec
 
-input_data['amp_list'] = [0,5,10,20] # uA
-input_data['step_list'] = [0,1,2,4]
+input_data['amp_list'] = [0,5,10,20,40] # uA
+input_data['step_list'] = [0,1,2,4,8]
 input_data['freq'] = 100 # Hz
 
 input_data['hand_vel_PDs'] = hand_vel_PDs
@@ -409,16 +639,16 @@ input_data['vae'] = vae
 input_data['all_joint_vel_norm'] = kin_var_norm
 input_data['all_joint_ang'] = joint_angs
 input_data['map_data'] = mdl.locmap()
-input_data['block_size'] = 0.067 # mm
+input_data['block_size'] = 0.05 # mm
 
 input_data['joint_vel'] = joint_vels
-input_data['n_trials'] = 1000
+input_data['n_trials'] = 500
 input_data['n_stim_chans'] = 4
 
 input_data['PD_tol'] = np.pi/8
 
 input_data['sim_score'] = neigh_sim
-input_data['sim_tol'] = 0.65 #
+input_data['sim_tol'] = np.percentile(neigh_sim,85) #
 
 amp_high_sim_exp_out, amp, step, stim_chan_list = stim_exp_utils.run_amp_high_sim_exp(input_data)
 
@@ -428,7 +658,7 @@ x=datetime.datetime.now()
 dname = '_ratemult' + str(gl.rate_mult) + '_' + x.strftime("%G")+'-'+x.strftime("%m")+'-'+x.strftime("%d")+'-'+x.strftime("%H")+x.strftime("%M")+x.strftime("%S")
 fname = project_folder+'\\'+exp_fname+dname+'.pkl'
 f=open(fname,'wb')
-pickle.dump([amp_high_sim_exp_out,amp,step,stim_chan_list,input_data],f)
+pickle.dump([amp_high_sim_exp_out,amp,step,stim_chan_list,neigh_sim,input_data],f)
 f.close()
 
 #%% load data
@@ -531,6 +761,108 @@ plt.ylabel('Proportion of trials within 90 deg of prediction')
 plt.legend(['0 step','1 step','2 step','4 step','8 step','16 step'])
 
 
+#%% get PD similarity vs. distance for neurons on and not-on the same electrode
+dists, pd_diffs = vae_utils.get_pd_dist(mdl.locmap(), hand_vel_PDs) # in blocks
+
+
+
+#%%
+non_neigh_pd_diff = pd_diffs[dists>3]
+neigh_pd_diff = pd_diffs[dists<=1]
+plt.figure()
+plt.hist(non_neigh_pd_diff)
+plt.figure()
+plt.hist(neigh_pd_diff)
+
+#%% run experiments for multiple amplitudes at different block sizes
+input_data = {}
+input_data['kin'] = 'hand';
+input_data['dec'] = dec
+
+input_data['amp_list'] = [0,5,10,15,20,40,80] # uA
+input_data['block_size_list'] = [0.03,0.05,0.067,0.08,0.1,0.2] # mm
+
+
+input_data['hand_vel_PDs'] = hand_vel_PDs
+
+input_data['freq'] = 100 # Hz
+input_data['n_pulses'] = 20 
+input_data['stim_start_t'] = gl.bin_size; # equivalent to 1 bin.
+input_data['dir_func'] = 'bio_mdl'
+
+
+input_data['trans_func'] = 'none'
+input_data['vae'] = vae
+input_data['all_joint_vel_norm'] = kin_var_norm
+input_data['all_joint_ang'] = joint_angs
+input_data['map_data'] = mdl.locmap()
+
+input_data['joint_vel'] = joint_vels
+input_data['n_trials'] = 500
+input_data['n_stim_chans'] = 4
+
+input_data['PD_tol'] = np.pi/8
+
+amp_blocksize_exp_out, block_size, amp, stim_exp_out = stim_exp_utils.run_blocksize_amp_stim_exp(input_data)
+
+exp_fname = 'amp_blocksize_exp'
+
+#%% save data
+x=datetime.datetime.now()
+dname = '_ratemult' + str(gl.rate_mult) + '_nchans' + str(input_data['n_stim_chans']) + '_' + x.strftime("%G")+'-'+x.strftime("%m")+'-'+x.strftime("%d")+'-'+x.strftime("%H")+x.strftime("%M")+x.strftime("%S")
+fname = project_folder+'\\'+exp_fname+dname+'.pkl'
+f=open(fname,'wb')
+pickle.dump([amp_blocksize_exp_out,n_chans,amp,input_data],f)
+f.close()
+
+#%% compare metrics across amps and plot
+# amp_elec_exp_out: For each condition: delta_vel_stim, delta_mag_stim, delta_dir_stim, pred_delta_dir
+
+plt.figure()
+act_hand_vel_mag = np.linalg.norm(hand_vels,ord=2,axis=1)
+max_hand_vel_mag = np.percentile(act_hand_vel_mag,95)
+
+data_to_plot = []
+pos_to_plot = []
+idx_look = 0
+for i_size in range(len(input_data['block_size_list'])):
+    for i_amp in range(len(input_data['amp_list'])):
+        delta_mag_stim = amp_blocksize_exp_out[idx_look][1]
+        data_to_plot.append(delta_mag_stim[:,0]/max_hand_vel_mag*100)
+        pos_to_plot.append(input_data['amp_list'][i_amp]+i_size)#-len(input_data['n_stim_chans_list'])/2)
+        idx_look=idx_look+1
+        
+plt.boxplot(data_to_plot,positions=pos_to_plot,widths=1)
+
+
+plt.xlabel('Amplitude')
+plt.ylabel('Magnitude (% max speed)')
+
+#%% proportion of trials within some bound for different amplitudes (each line is a number of channels)
+ang_thresh = np.pi/2;
+
+prop_below_thresh = np.zeros((len(input_data['block_size_list']),len(input_data['amp_list'])))
+plt.figure()
+ls = ['solid','dashed','dotted']
+m = ['.','s','v']
+colors = plt.cm.inferno([0,40,80,120,160,200,240])
+
+idx_look = 0
+for i_size in range(len(input_data['block_size_list'])):
+    for i_amp in range(len(input_data['amp_list'])):
+        delta_dir_stim = amp_blocksize_exp_out[idx_look][-2]
+        pred_delta_dir = amp_blocksize_exp_out[idx_look][-1]
+        ang_diff = abs(vae_utils.circular_diff(delta_dir_stim[:,0],pred_delta_dir[:]))
+        prop_below_thresh[i_size,i_amp] = np.sum(ang_diff<ang_thresh)/len(ang_diff)
+        idx_look = idx_look+1
+    plt.plot(input_data['amp_list'],prop_below_thresh[i_size,:],color=colors[i_size],linestyle=ls[0],marker=m[0],markersize=12)
+    
+plt.xlabel('Amplitude')
+plt.ylabel('Proportion of trials within 90 deg of prediction')            
+plt.legend(['30um','50um','67um','80um','100um','200um'])
+
+
+
 #%%
 
 # 
@@ -542,16 +874,18 @@ print(neigh_sim[good_idx.astype(int)])
 # run stimulation trial
 # set stim params
 
-kin_var_samp = kin_var_norm[0:50] # use normalized joint velocity for vae, actual joint velocity for decoder and opensim
+kin_var_samp = kin_var_norm[20:50] # use normalized joint velocity for vae, actual joint velocity for decoder and opensim
 
 input_data = {}
 
-input_data['stim_chan'] = np.array([200])
-input_data['amp'] = 1 # uA
-input_data['freq'] = 100 # Hz
-input_data['n_pulses'] = 10 # s
+input_data['stim_chan'] = np.array([2600])
+input_data['amp'] = 50 # uA
+input_data['freq'] = 200 # Hz
+input_data['n_pulses'] = 40 # s
 input_data['stim_start_t'] = gl.bin_size; # equivalent to 1 bin.
-input_data['dir_func'] = 'bio_mdl'
+input_data['dir_func'] = 'stoney'
+input_data['decay_prob'] = 1
+
 input_data['trans_func'] = 'none'
 input_data['vae'] = vae
 
@@ -561,23 +895,75 @@ input_data['dec'] = dec
 input_data['kin'] = 'hand'
 
 input_data['map_data'] = mdl.locmap()
-input_data['block_size'] = 0.1 # mm
+input_data['block_size'] = 0.05 # mm
 
-# [rates, samp_rates, samp_rates_stim, is_act, joint_vel_stim, point_kin_data]
+# [rates, samp_rates_stim, is_act, hand_vel_true, hand_vel_stim]
 stim_out = stim_exp_utils.run_stim_trial(input_data)
-no_stim_rates = stim_out[1]
-stim_rates = stim_out[2]
-is_act = stim_out[3]
+input_data['amp']=0
+no_stim_out = stim_exp_utils.run_stim_trial(input_data)
 
-point_kin = stim_out[-1] # [hand_pos,hand_vel,hand_acc,elbow_pos,elbow_vel,elbow_acc]
+no_stim_rates = no_stim_out[1]
+stim_rates = stim_out[1]
+is_act = stim_out[2]
 
-no_stim_rates, stim_rates = vae_utils.visualize_activation_map(stim_rates, no_stim_rates, idx=1)
-vae_utils.visualize_activation_dist(is_act, input_data['stim_chan'],input_data['block_size'])
+point_kin_no = 100*no_stim_out[-1] # [hand_pos,hand_vel,hand_acc,elbow_pos,elbow_vel,elbow_acc]
+point_kin_stim = 100*stim_out[-1]
+no_stim_rates_map, stim_rates_map = vae_utils.visualize_activation_map(stim_rates, no_stim_rates, idx=1)
+
+#vae_utils.visualize_activation_dist(is_act, input_data['stim_chan'],input_data['block_size'])
+
+#%% plot hand vel during stimulation (stim and no stim)
+
+plt.subplot(1,2,1)
+plt.plot(point_kin_no[:,0],point_kin_stim[:,0],'.')
+plt.subplot(1,2,2)
+plt.plot(point_kin_no[:,1],point_kin_stim[:,1],'.')
 
 #%%
-n_samp = 10000
-rate = 20+np.zeros((n_samp,1))
-samp_rate = vae_utils.sample_rates(rate)
+
+mse = np.mean(np.square(point_kin_no-point_kin_stim),axis=0)
+
+#%% set global plot style
+sns.set_style('ticks') # darkgrid, white grid, dark, white and ticks
+plt.rc('axes', titlesize=18)     # fontsize of the axes title
+plt.rc('axes', labelsize=16)    # fontsize of the x and y labels
+plt.rc('xtick', labelsize=14)    # fontsize of the tick labels
+plt.rc('ytick', labelsize=14)    # fontsize of the tick labels
+plt.rc('legend', fontsize=14)    # legend fontsize
+plt.rc('font', size=14)          # controls default text sizes
+
+plt.figure(figsize=(5,5))
+ax=plt.axes()
+idx = 1
+
+plt.plot(point_kin_no[idx-1:idx+2,0],point_kin_no[idx-1:idx+2,1],color='black', marker='.',markersize=12, linewidth=2)  # no stim 
+plt.plot(point_kin_stim[idx-1:idx+2,0],point_kin_stim[idx-1:idx+2,1],color='tab:red', marker='.', markersize=12, linewidth=2) # stim
+
+sns.despine()
+
+plt.xlim([-12,4])
+plt.ylim([-4,12])
+plt.xticks(ticks=np.arange(-12,6,4))
+plt.yticks(ticks=np.arange(-4,14,4))
+ax.xaxis.set_minor_locator(MultipleLocator(1))
+ax.yaxis.set_minor_locator(MultipleLocator(1))
+
+plt.xlabel('X Hand-vel (cm/s)')     
+plt.ylabel('Y Hand-vel (cm/s)')
+            
+#%%
+gl.rate_mult = 1
+rates = vae_utils.vae_get_rates(vae, kin_var_norm, gl.bin_size)
+samp_rates = vae_utils.sample_rates(rates)
+
+idx=0
+
+#%%
+plt.figure()
+plt.hist(samp_rates.reshape(-1,1),50)
+print(np.mean(samp_rates[:,idx]))
+print(np.square(np.std(samp_rates[:,idx])))
+print(np.square(np.std(samp_rates[:,idx]/gl.rate_mult)))
 
 #%%
 

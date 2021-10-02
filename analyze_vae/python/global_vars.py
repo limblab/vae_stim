@@ -43,7 +43,6 @@ class Params:
         with open(filename,'w') as f:
             doc = yaml.dump(self.params,f)
 
-
 def global_vars():
     global params;
     global bin_size

@@ -26,6 +26,8 @@ def load_vae_parameters(fpath, input_size):
 def vae_decoder(vae,samples,bin_size):
     samples = torch.from_numpy(samples).type(torch.FloatTensor)
     out_sig = vae.decoder(samples*bin_size/gl.rate_mult)
+    #out_sig = vae.decoder(samples)
+    #out_sig = out_sig*bin_size/gl.rate_mult
     
     return out_sig.detach().numpy()
 
@@ -47,13 +49,14 @@ def vae_get_rates(vae, in_sig,bin_size):
     rates = vae.encoder(in_sig)
     rates = rates.detach().numpy()
     
-    return gl.rate_mult*rates/bin_size
+    return rates
 
 def sample_rates(rates):
     rates = torch.from_numpy(rates[:,:]).type(torch.FloatTensor)
-    posterior = torch.distributions.Poisson(rates)
+    posterior = torch.distributions.Poisson(rates/gl.bin_size)
     samples = posterior.sample()
-    return samples.detach().numpy()
+    samples = samples.detach().numpy()
+    return gl.rate_mult*samples
 
 
 class LinearDecoder(torch.nn.Module):
@@ -129,15 +132,15 @@ def visualize_activation_map(stim_rates, no_stim_rates, idx=1):
     no_stim_rates_map = convert_list_to_map(no_stim_rates,mapping)
     stim_rates_map = convert_list_to_map(stim_rates,mapping)
 
-    fig, ax = plt.subplots(1,3)
+    fig, ax = plt.subplots(1,2)
     x=ax[0].imshow(no_stim_rates_map[:,:,idx])
     fig.colorbar(x,ax=ax[0])
     
-    x=ax[1].imshow(stim_rates_map[:,:,idx])
+    x=ax[1].imshow(stim_rates_map[:,:,idx],vmin=0)
     fig.colorbar(x,ax=ax[1])
     
-    x=ax[2].imshow(stim_rates_map[:,:,idx]-no_stim_rates_map[:,:,idx])
-    fig.colorbar(x,ax=ax[2])
+    #x=ax[2].imshow(stim_rates_map[:,:,idx]-no_stim_rates_map[:,:,idx])
+    #fig.colorbar(x,ax=ax[2])
     
     return no_stim_rates_map, stim_rates_map
     
@@ -218,6 +221,8 @@ def get_neighbor_sim(loc_map, sim_map, max_neigh_dist):
     
     for i_unit in range(len(neigh_sim)):
         dist_mat = euclidean_distances(loc_map[i_unit,:].reshape(1,-1), loc_map)
+        dist_mat = dist_mat.reshape((-1,))
+        dist_mat[i_unit] = 10000 # set current unit's distance as absurdly large
         neigh_idx = np.argwhere(dist_mat <= max_neigh_dist)
         sim_scores = sim_map[i_unit,neigh_idx]
         neigh_sim[i_unit] = np.mean(sim_scores)
@@ -245,6 +250,20 @@ def get_pd_neighbor_dist(loc_map, pds, max_neigh_dist):
                 non_neigh_pd_diff.append(angle_diffs[j_unit])
     
     return neigh_pd_diff, neigh_dist, non_neigh_pd_diff, non_neigh_dist
+
+def get_pd_dist(loc_map, pds):
+    dists = euclidean_distances(loc_map)
+    
+    pd_vec = np.array([np.cos(pds),np.sin(pds)])
+    cos_sim = cosine_similarity(np.transpose(pd_vec))
+    cos_sim[cos_sim>1] = 1
+    cos_sim[cos_sim<-1] = -1
+    ang_diff = np.arccos(cos_sim)
+    
+    dists = dists.reshape((-1,))
+    ang_diff = ang_diff.reshape((-1,))
+    
+    return dists, ang_diff
     
 def circular_diff(data_1, data_2):
     
@@ -252,9 +271,14 @@ def circular_diff(data_1, data_2):
     
     max_diff = np.pi
     
-    diff[diff<-max_diff] = diff[diff<-max_diff] + 2*max_diff
-    diff[diff>max_diff] = diff[diff>max_diff] - 2*max_diff
-    
+    if hasattr(diff,"__len__"):
+        diff[diff<-max_diff] = diff[diff<-max_diff] + 2*max_diff
+        diff[diff>max_diff] = diff[diff>max_diff] - 2*max_diff
+    elif(diff > max_diff):
+        diff = diff - 2*max_diff
+    elif(diff < -max_diff):
+        diff = diff + 2*max_diff
+        
     return diff
     
     
@@ -264,6 +288,7 @@ def convert_loc_to_idx(locs, mapping):
     for i in range(locs.shape[1]):
         curr_loc = locs[:,i]
         idx_list[i] = np.argwhere(np.all(curr_loc == mapping,1))
+        
         
     return idx_list
     
