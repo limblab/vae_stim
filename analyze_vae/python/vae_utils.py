@@ -14,6 +14,9 @@ import osim_utils as osim
 import statsmodels.api as sm
 import global_vars as gl
 
+import stim_exp_utils
+import scipy as sp
+
 def load_vae_parameters(fpath, input_size):
     encoder = mdl.Encoder(input_size=input_size)
     decoder = mdl.Decoder(input_size=input_size)
@@ -73,7 +76,7 @@ class LinearDecoder(torch.nn.Module):
 
         return x
 
-def make_linear_decoder(x, y, drop_rate=0.95, n_iters=1000,lr=0.001):
+def make_linear_decoder(x, y, drop_rate=0.95, n_iters=1000,lr=0.001,init_weights=[]):
     
     # find decoder: x * dec + bias = y
     # dec shape = x.shape[1], y.shape[1]
@@ -81,6 +84,10 @@ def make_linear_decoder(x, y, drop_rate=0.95, n_iters=1000,lr=0.001):
     y_tr = torch.from_numpy(y[:,:]).type(torch.FloatTensor)
     
     dec = LinearDecoder(x.shape[1],y.shape[1],drop_rate)
+
+    # use initial weights (numpy array) if provided
+    if(len(init_weights)>0):
+        dec.state_dict()['layer1.0.weight'][:] = torch.Tensor(init_weights)
 
     dec.train()
     criterion = torch.nn.MSELoss()
@@ -101,6 +108,49 @@ def make_linear_decoder(x, y, drop_rate=0.95, n_iters=1000,lr=0.001):
     
     return dec
     
+def make_constrained_linear_decoder(x, y, PDs, drop_rate=0.95, n_iters=1000,lr=0.001,init_weights=[]):
+    
+    # find decoder: x * dec + bias = y
+    # dec shape = x.shape[1], y.shape[1]
+    x_tr = torch.from_numpy(x[:,:]).type(torch.FloatTensor)
+    y_tr = torch.from_numpy(y[:,:]).type(torch.FloatTensor)
+        
+    dec = LinearDecoder(x.shape[1],1,drop_rate)
+        
+    dec.train()
+    criterion = torch.nn.MSELoss()
+    optimizer = torch.optim.Adam(dec.parameters(), lr=lr)
+    
+    PD_mag = np.vstack((np.cos(PDs),np.sin(PDs)))
+    mag_x = np.tile(PD_mag[0,:].reshape(1,-1),(x_tr.shape[0],1))
+    mag_y = np.tile(PD_mag[1,:].reshape(1,-1),(x_tr.shape[0],1))
+    x_tr_x = (x_tr*mag_x).type(torch.FloatTensor)
+    x_tr_y = (x_tr*mag_y).type(torch.FloatTensor)
+        
+    for i_iter in range(n_iters):
+        # get predictions and error for each direction
+        yhat_x = dec(x_tr_x)
+        yhat_y = dec(x_tr_y)
+        
+        yhat = torch.hstack((yhat_x,yhat_y))
+        
+        recon_error = criterion(yhat,y_tr)
+        
+        # update weights
+        optimizer.zero_grad()
+        recon_error.backward()
+        optimizer.step()
+        for p in dec.parameters():
+            p.data.clamp_(0)
+            
+        # print current MSE
+        if(i_iter % 50 == 0):
+            print(str(i_iter) + ": " + str(recon_error.detach().numpy()))
+    
+    
+    return dec
+
+
 def linear_dec_forward(dec, x):
     
     dec.eval()
@@ -108,6 +158,18 @@ def linear_dec_forward(dec, x):
     yhat = yhat.detach().numpy()    
     return yhat
 
+
+def linear_constrained_dec_forward(dec, x, PDs):
+    PD_mag = np.vstack((np.cos(PDs),np.sin(PDs)))
+    mag_x = np.tile(PD_mag[0,:].reshape(1,-1),(x.shape[0],1))
+    mag_y = np.tile(PD_mag[1,:].reshape(1,-1),(x.shape[0],1))
+    
+    y_hat_x = linear_dec_forward(dec=dec,x=x*mag_x).reshape((-1,1))
+    y_hat_y = linear_dec_forward(dec=dec,x=x*mag_y).reshape((-1,1))
+
+    y_hat = np.hstack((y_hat_x,y_hat_y))
+    
+    return y_hat
 
 def get_decoder_params(dec):
     param_list = []
@@ -214,6 +276,58 @@ def get_PD_similarity(vae,joint_vels_norm,hand_vels):
     
     return hand_vel_PDs, hand_vel_params
     
+def get_hash_PDs(vae, joint_vels_norm, hand_vels, locs):
+    rates = vae_get_rates(vae,joint_vels_norm,gl.bin_size)
+
+    glm_in = hand_vels
+    glm_in = sm.add_constant(glm_in,prepend=False)
+    
+    hash_PDs = np.zeros(rates.shape[1])
+    hash_params = np.zeros((rates.shape[1],2))
+    hash_rates = np.zeros_like(rates)
+    
+    # get distance matrix
+    dist_mat = euclidean_distances(locs)
+    #np.fill_diagonal(dist_mat,10000)
+    #min_dist = np.min(dist_mat)
+    #np.fill_diagonal(dist_mat,min_dist*2/3)
+    
+    for i_unit in range(rates.shape[1]):
+        if(i_unit % 100 == 0):
+            print(i_unit)
+            
+        # sum rates across neighboring neurons (as if we did a multi-unit hash instead of single neuron)
+        # do sum(1/dist^2 * rates), dist is dist from current location
+       
+        #dist_factor = 1/np.square(dist_mat[i_unit,:])
+
+        
+        
+        # do linear activation. 0mm = 0.12, 0.160mm = 0
+        # slope = -0.12/0.16 mm
+        # b = 0.12
+        
+        dist_factor = 0.12*(1-dist_mat[i_unit,:]/0.16)
+        
+        dist_factor[dist_factor < 0] = 0
+        dist_factor = dist_factor.reshape(-1,1)
+        
+        
+        hash_rates[:,i_unit] = np.matmul(rates,dist_factor).reshape((-1,))
+        
+        # set hash rates as glm out and fit model
+        glm_out = hash_rates[:,i_unit]
+        glm_PD_mdl = sm.GLM(glm_out,glm_in,family=sm.families.Poisson(sm.families.links.log()))
+        res = glm_PD_mdl.fit()
+        
+        # store parameters
+        # 0,1,2 = hand pos; 3,4 = hand vel (x,y); 5,6 = hand vel z, constant
+        hash_PDs[i_unit] = np.arctan2(res.params[1],res.params[0])
+        hash_params[i_unit,0] = res.params[0]
+        hash_params[i_unit,1] = res.params[1]
+        
+    return hash_PDs, hash_params, rates, hash_rates
+
 def get_neighbor_sim(loc_map, sim_map, max_neigh_dist):
     
     # for each neuron, get similarity between it and it's neighbors
@@ -266,7 +380,7 @@ def get_pd_dist(loc_map, pds):
     return dists, ang_diff
     
 def circular_diff(data_1, data_2):
-    
+    # expects data in radians
     diff = data_1 - data_2
     
     max_diff = np.pi
@@ -294,11 +408,87 @@ def convert_loc_to_idx(locs, mapping):
     
     
 
+def compute_multielec_pred(stim_chans_loc,map_data,amp,hand_vel_PDs,elec_space=8): # dist in blocks, each block is 50 um
+    
+    x = np.arange(0, 80, elec_space, dtype=np.float32) 
+    x = np.append(x,-1*x[1:])
+    y = np.arange(0, 80, elec_space, dtype=np.float32)
+    y = np.append(y,-1*y[1:])
+    xv, yv = np.meshgrid(x, y)
+    xv = np.reshape(xv, (xv.size, 1))
+    yv = np.reshape(yv, (yv.size, 1))
+    grid = np.hstack((xv, yv))
+    
+    
+    dist_all = np.array([])
+    PD_all = np.array([])
+    
+    for i in range(stim_chans_loc.shape[0]):
+        curr_loc = stim_chans_loc[i,:]
+        
+        # mask based on electrode_spacing (make a grid, shift grid onto curr_loc)
+        grid_curr = grid + curr_loc
+        # remove any entries that are negative or bigger than 80
+        keep_mask = np.all(np.logical_and(grid_curr < 80,  grid_curr >= 0),axis=1)
+        grid_curr = grid_curr[keep_mask==1,:]
+        
+        grid_idx = convert_loc_to_idx(np.transpose(grid_curr), map_data).astype(int)
+        
+        # get distance from stim electrode for all neurons
+        dist_mat = euclidean_distances(curr_loc.reshape(1,-1), map_data).reshape(-1,1) # in blocks
+        # then only use those in the correct grid
+        dist_mat = dist_mat[grid_idx]
+        PDs_use = hand_vel_PDs[grid_idx]
+        
+        # store PDs and distance from stim electrode
+        dist_all = np.append(dist_all,dist_mat)
+        PD_all = np.append(PD_all, PDs_use)
+    
+    # make prediction across neurons, accounting for distance and amplitude of stim
+    prob_act = stim_exp_utils.get_prob_act(100, dist_all*0.05) # convert distance to mm
+    
+    # take a weighted mean based on prob act and PD distribution. scipy.circ_mean does not have a weight, so instead we will make a matrix with # entries corresponding to weight
+    PDs_as_weights = np.vstack((np.cos(PD_all), np.sin(PD_all)))
+
+    # normalize PDs_as_weights based on PD distribution
+    PD_distribution, bin_edges = np.histogram(hand_vel_PDs,20)
+    bin_idx = np.digitize(PD_all, bin_edges) - 1
+    bin_idx[bin_idx < 0] = 0
+    bin_idx[bin_idx >= len(PD_distribution)] = len(PD_distribution)-1
+    n_bin = PD_distribution[bin_idx]
+    
+    PDs_as_weights = PDs_as_weights/n_bin*6400
+    weight = np.sqrt(np.sum(np.square(PDs_as_weights),axis=0))
+
+
+    num_reps = np.round_(100*np.multiply(prob_act.reshape((-1,)),weight), decimals=0).reshape((-1,))
+    
+    PD_rep = np.repeat(PD_all, num_reps.astype(int))
+    
+
+
+    return sp.stats.circmean(PD_rep,low=-np.pi,high=np.pi), grid_idx, dist_all, PD_all
     
     
     
     
+def compute_histogram_overlap(data1, data2,bin_size=5): 
+    # this function bins the data in [min(data1, data2), max(data1,data2)] using bin_size
+    # then computes distribution overlap based on those bins (summing the min value in each bin)
+    # normalize by bin size such that the same data produces an overlap of 1.
     
     
+    data_range = [np.min(np.vstack((data1,data2))), np.max(np.vstack((data1,data2)))]
+
+    bin_edges = np.arange(data_range[0],data_range[1]+bin_size,bin_size)
+
+    data1_hist,bin_edges = np.histogram(data1,bins=bin_edges)
+    data2_hist,bin_edges = np.histogram(data2,bins=bin_edges)
+    
+    data1_hist = data1_hist/len(data1)
+    data2_hist = data2_hist/len(data2)
+    
+    perc_over = np.sum(np.minimum(data1_hist,data2_hist))
     
     
+    return perc_over, data1_hist,data2_hist, bin_edges

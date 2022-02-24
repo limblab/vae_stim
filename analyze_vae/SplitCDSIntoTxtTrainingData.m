@@ -29,6 +29,7 @@ for i_start = 1:numel(td.idx_startTime)
     end 
 end
 
+
 %% downsample vel to have a uniform movement distribution
 n_samps = ceil(length(td.opensim_hand_vel)*0.4);
 
@@ -49,10 +50,7 @@ vel_samped = td.opensim_hand_vel(train_idx,:);
 ang_samp = atan2(vel_samped(:,2),vel_samped(:,1));
 histogram(ang_samp)
 
-%% set nan's as -10000 so that python code doesn't fail
-
-td.joint_ang(any(isnan(td.ang),2),:) = [];
-td.joint_vel(any(isnan(td.joint_vel),2),:) = [];
+sub_joint_vel_norm = joint_vel_norm(train_idx,:);
 
 %% Extract joint_vel data in txt file
 joint_vel = td.joint_vel;
@@ -87,7 +85,8 @@ norm_joint_vel = (joint_vel(train_idx,:)-mu)./sigma;
 joint_vel = joint_vel(train_idx,:);
 joint_ang = td.joint_ang(train_idx,:);
 %%
-dlmwrite([pathname,filesep,'Han_20160315_RW_SmoothRawJointAng_uniformAngDist_50ms.txt'],joint_ang,'delimiter',',','newline','pc')
+dlmwrite([pathname,filesep,'Han_20160315_RW_SmoothNormalizedJointVel_uniformAngDist_50ms.txt'],sub_joint_vel_norm,'delimiter',',','newline','pc')
+dlmwrite([pathname,filesep,'Han_20160315_RW_SmoothNormalizedJointVel_50ms.txt'],joint_vel_norm,'delimiter',',','newline','pc')
 
 
 

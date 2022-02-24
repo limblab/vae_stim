@@ -48,13 +48,14 @@ hand_vels_norm = np.genfromtxt(path_to_norm_hand_vels,delimiter=',')[trial_mask=
 kin_var_norm = joint_vels_norm
 
 #%% pick experiments to run
-run_amp_elec_exp = 1
+run_amp_elec_exp = 0
 run_amp_freq_exp = 0
 run_amp_sim_exp = 0
 run_amp_blocksize_exp = 0
-run_PD_neighborhood_exp = 1
-
-
+run_PD_neighborhood_exp = 0
+run_amp_elec_repeat_exp = 0
+run_PD_distribution_exp = 1
+run_PD_hash_exp = 0
 #%% run analysis for many maps
 # get project folder and all relevant sub folders
 fpath = r'D:\Lab\Data\StimModel\models'
@@ -62,7 +63,7 @@ folders = glob.glob(fpath + '\\Han_*')
 
 #folders_use = np.random.choice(len(folders),10,replace=False)
 
-for i_folder in range(len(folders)):
+for i_folder in [0]:#range(1,len(folders)):
     print('Folder: ' + str(i_folder))
     # load parameter file. This is currently convoluted, but works
     path_to_model_dict = glob.glob(folders[i_folder] + r'\*model_params*')[0]
@@ -80,9 +81,9 @@ for i_folder in range(len(folders)):
     dec = pickle.load(f)
     f.close()
     
-    path_to_PDs = glob.glob(folders[i_folder] + '\\*PD_calc*')
+    path_to_PDs = glob.glob(folders[i_folder] + '\\*PD_multiunit_hash_pow2*')
     f=open(path_to_PDs[0],'rb')
-    hand_vel_PDs = pickle.load(f)
+    hand_vel_PDs = pickle.load(f)[0]
     f.close()
     
     # run experiments for multiple amplitudes and number of electrodes
@@ -270,19 +271,74 @@ for i_folder in range(len(folders)):
         pickle.dump([pd_diff,unit_dist],f)
         f.close()
             
+    if(run_amp_elec_repeat_exp):
+        input_data = {}
+        input_data['kin'] = 'hand';
+        input_data['dec'] = dec
+        
+        #input_data['amp_list'] = [0,5,10,15,20,40,80] # uA
+        input_data['amp_list'] = [0,10,20]
+        input_data['hand_vel_PDs'] = hand_vel_PDs
+        
+        input_data['freq'] = 200 # Hz
+        input_data['n_pulses'] = 40 
+        input_data['stim_start_t'] = gl.bin_size; # equivalent to 1 bin.
+        input_data['dir_func'] = 'bio_mdl'
+        input_data['decay_prob'] = 1
+        input_data['trans_func'] = 'none'
+        input_data['vae'] = vae
+        input_data['all_joint_vel_norm'] = kin_var_norm
+        input_data['all_joint_ang'] = joint_angs
+        input_data['map_data'] = mdl.locmap()
+        input_data['block_size'] = 0.05 # mm
+        
+        input_data['joint_vel'] = joint_vels
+        input_data['n_trials'] = 25
+        input_data['n_stim_chans'] = 4 # can't be a list
+        input_data['n_sets'] = 500
+        
+        input_data['PD_tol'] = np.pi/8
+        
+        single_loc_exp, loc_idx, amp, stim_exp_out, stim_chan_list = stim_exp_utils.run_single_location_exp(input_data)
+        
+        exp_fname = 'multi_loc_repetition_few_conditions_exp_multiunitPDs'
             
+        # save data
+        x=datetime.datetime.now()
+        dname = '_ratemult' + str(gl.rate_mult) + '_nchans' + str(input_data['n_stim_chans']) + '_' + x.strftime("%G")+'-'+x.strftime("%m")+'-'+x.strftime("%d")+'-'+x.strftime("%H")+x.strftime("%M")+x.strftime("%S")
+        fname = folders[i_folder]+'\\'+exp_fname+dname+'.pkl'
+        f=open(fname,'wb')
+        pickle.dump([single_loc_exp,loc_idx,amp,input_data,stim_chan_list],f)
+        f.close()
             
+    if(run_PD_distribution_exp):    
+        n_bins = 10
+        PD_hist, PD_bin_edges = np.histogram(hand_vel_PDs,bins=n_bins)
+        
+        n_data = np.sum(PD_hist)
+        PD_hist = PD_hist/n_data
+        exp_count = 1/n_bins
+        
+        non_uniform_meas = np.linalg.norm(PD_hist,ord=2)
+        chi_square = np.sum(np.divide(np.square(PD_hist-exp_count),exp_count))
+
+        exp_fname = 'PD_distribution_uniformity_multiUnitPDs_v4'
+        x=datetime.datetime.now()
+        dname = exp_fname + x.strftime("%G")+'-'+x.strftime("%m")+'-'+x.strftime("%d")+'-'+x.strftime("%H")+x.strftime("%M")+x.strftime("%S")
+        fname = folders[i_folder]+'\\'+exp_fname+dname+'.pkl'
+        f=open(fname,'wb')
+        pickle.dump([PD_hist,non_uniform_meas,chi_square],f)
+        f.close()
             
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+    if(run_PD_hash_exp):
+        hash_PDs, hash_params, rates, hash_rates = vae_utils.get_hash_PDs(vae, kin_var_norm, hand_vels, mdl.locmap()*0.05) # locations in mm
+        exp_fname = 'PD_multiunit_hash_pow2_small'
+        x=datetime.datetime.now()
+        dname = exp_fname + x.strftime("%G")+'-'+x.strftime("%m")+'-'+x.strftime("%d")+'-'+x.strftime("%H")+x.strftime("%M")+x.strftime("%S")
+        fname = folders[i_folder]+'\\'+exp_fname+dname+'.pkl'
+        f=open(fname,'wb')
+        pickle.dump([hash_PDs],f)
+        f.close()  
             
             
             

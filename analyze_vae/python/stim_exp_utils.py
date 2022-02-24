@@ -33,6 +33,50 @@ inputs to a trial:
     block_size : size of a single block (in mm)
 """
 
+def get_prob_act(amp, dist_mat):
+    # find amplitude in list
+    amp_idx = np.argwhere(gl.karth_amp == amp)
+    
+    # if it isn't there, interpolate
+    if amp_idx.size == 0:
+        # find amplitudes in bio model that are below and above given amp
+        amp_idx_down = np.argwhere(amp > gl.karth_amp)[-1]
+        amp_idx_up = np.argwhere(amp < gl.karth_amp)[0]
+        
+        # get probability for those amplitudes
+        bin_idx = np.digitize(dist_mat*1000, gl.karth_dist) # convert dist to um
+        bin_idx[bin_idx==0] = 1
+        bin_idx[bin_idx==gl.karth_dist.shape[0]] = gl.karth_dist.shape[0]-1
+        bin_idx = bin_idx - 1
+        
+        prob_act_down = gl.karth_act_prop[amp_idx_down,bin_idx].reshape(-1,1)
+        prob_act_up = gl.karth_act_prop[amp_idx_up,bin_idx].reshape(-1,1)
+        
+        # take weighted mean to do linear
+        prob_act = np.concatenate((prob_act_down,prob_act_up),axis=1)
+        
+        val = (amp-gl.karth_amp[amp_idx_down])/(gl.karth_amp[amp_idx_up]-gl.karth_amp[amp_idx_down])
+        amp_weights = np.transpose(np.tile(np.array([1-val,val]),prob_act.shape[0])) 
+        
+        prob_act = np.average(prob_act,axis=1,weights=amp_weights).reshape(-1,1)
+        
+        
+    # if it's there, get distance bin for each neuron, use probability associated with that bin
+    else:
+        bin_idx = np.digitize(dist_mat*1000, gl.karth_dist) # convert dist to um
+        bin_idx[bin_idx==0] = 1
+        bin_idx[bin_idx==gl.karth_dist.shape[0]] = gl.karth_dist.shape[0]-1
+        bin_idx = bin_idx - 1
+        
+        prob_act = gl.karth_act_prop[amp_idx,bin_idx].reshape(-1,1)
+        
+    # deal with probabilities out of range
+    prob_act[prob_act<0] = 0
+    prob_act[prob_act>1] = 1
+    
+    return prob_act
+    
+    
 def get_activated_neurons(input_data, stim_chan_loc):
     
     # get distance from stim_loc to other neurons 
@@ -52,16 +96,16 @@ def get_activated_neurons(input_data, stim_chan_loc):
         
         is_act = np.random.rand(prob_act.shape[0],prob_act.shape[1]) < prob_act
         
-        # TODO: IMPLEMENT THIS
     elif(input_data['dir_func'].lower() == "bio_mdl"):
         # use activation data from Karthik's modeling.
         
+        prob_act = get_prob_act(input_data)
+        """
         # find amplitude in list
         amp_idx = np.argwhere(gl.karth_amp == input_data['amp'])
         
         # if it isn't there, interpolate
         if amp_idx.size == 0:
-            is_act = np.zeros((input_data['map_data'].shape[0],input_data['n_pulses']))
             # find amplitudes in bio model that are below and above given amp
             amp_idx_down = np.argwhere(input_data['amp'] > gl.karth_amp)[-1]
             amp_idx_up = np.argwhere(input_data['amp'] < gl.karth_amp)[0]
@@ -95,6 +139,7 @@ def get_activated_neurons(input_data, stim_chan_loc):
             
             
         prob_act[prob_act<0] = 0
+        """
         prob_act = np.tile(prob_act,input_data['n_pulses'])
         
         if('decay_prob' in input_data and input_data['decay_prob'] == 1):
@@ -222,10 +267,10 @@ def update_rates_stim(input_data, rates, is_act,bin_edges):
         num_act = np.sum(is_act[:,pulse_bin_idx==i_bin],axis=1)
         
         # set rates in bin to 0 if responsive at all
-        #updated_rate[i_bin,np.argwhere(num_act>0)] = 0
+        updated_rate[i_bin,np.argwhere(num_act>0)] = 0
+        # lower rates in bin to account for inhibition -- alternative method
+        #updated_rate[i_bin,:] = updated_rate[i_bin,:] - np.multiply(updated_rate[i_bin,:],np.transpose(num_act*(0.01/gl.bin_size))) # remove 10 ms of data
         
-        # lower rates in bin to account for inhibition
-        updated_rate[i_bin,:] = updated_rate[i_bin,:] - np.multiply(updated_rate[i_bin,:],np.transpose(num_act*(0.01/gl.bin_size))) # remove 10 ms of data
         # then add spikes to rates based on number of times activated and bin size
         updated_rate[i_bin,:] = updated_rate[i_bin,:] + np.transpose(num_act)/gl.bin_size
     
@@ -281,6 +326,8 @@ def run_stim_trial(input_data):
     rates = vae_utils.vae_get_rates(input_data['vae'],input_data['joint_vel'],gl.bin_size)
     
     # sample "spikes" and then bin <- adds noise
+    #samp_rates_stim = gl.rate_mult*rates/gl.bin_size 
+    samp_rates_no_stim = vae_utils.sample_rates(rates)
     samp_rates_stim = vae_utils.sample_rates(rates)
     
     # stimulate map
@@ -317,17 +364,39 @@ def run_stim_trial(input_data):
             hand_vel_true, hand_vel_stim, hand_vel_no,
             elbow_vel_true, elbow_vel_stim, elbow_vel_no]
         
-    elif(input_data['kin'].lower() == 'hand'): # currently, this is not meant to be ran with run many stim trials as output of function is different than with joint
-        kin_var_true = vae_utils.vae_decoder(vae=input_data['vae'],samples=rates,bin_size=gl.bin_size)
+    elif(input_data['kin'].lower() == 'hand'): 
+        kin_var_no = vae_utils.vae_decoder(vae=input_data['vae'],samples=samp_rates_no_stim,bin_size=gl.bin_size)
         kin_var_stim = vae_utils.vae_decoder(vae=input_data['vae'],samples=samp_rates_stim,bin_size=gl.bin_size)
         
-        hand_vel_true = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_true)
+        hand_vel_no = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_no)
         hand_vel_stim = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_stim)
         
         return [rates, samp_rates_stim, is_act, 
-            hand_vel_true, hand_vel_stim]
+            hand_vel_no, hand_vel_stim]
         
+    elif(input_data['kin'].lower() == 'retrained_vae'):
+        kin_var_no = vae_utils.linear_dec_forward(dec=input_data['vae_dec'],x=samp_rates_no_stim)
+        kin_var_stim = vae_utils.linear_dec_forward(dec=input_data['vae_dec'],x=samp_rates_stim)
         
+        hand_vel_no = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_no)
+        hand_vel_stim = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_stim)
+        
+        return [rates, samp_rates_stim, is_act, 
+            hand_vel_no, hand_vel_stim]
+        
+    elif(input_data['kin'].lower() == 'straight_to_hand'):
+        hand_vel_no = vae_utils.linear_dec_forward(dec=input_data['dec'],x=samp_rates_no_stim)
+        hand_vel_stim = vae_utils.linear_dec_forward(dec=input_data['dec'],x=samp_rates_stim)
+        
+        return [rates, samp_rates_stim, is_act, 
+            hand_vel_no, hand_vel_stim]
+        
+    elif(input_data['kin'].lower() == 'straight_to_hand_constrained'):
+        hand_vel_no = vae_utils.linear_constrained_dec_forward(dec=input_data['dec'],x=samp_rates_no_stim,PDs=input_data['hand_vel_PDs'])
+        hand_vel_stim = vae_utils.linear_constrained_dec_forward(dec=input_data['dec'],x=samp_rates_stim,PDs=input_data['hand_vel_PDs'])
+        
+        return [rates, samp_rates_stim, is_act, 
+            hand_vel_no, hand_vel_stim]
     else:
         raise Exception('kin not implemented')
     # output samp_rates, samp_rates stim (so that the effect of stim can be seen), 
@@ -703,6 +772,8 @@ def run_blocksize_amp_stim_exp(input_data):
     metrics = []
     size_list = []
     a_list = []
+    stim_chan_list = []
+    
     input_data['trial_len_idx'] = np.ceil((input_data['stim_start_t'] + np.max(input_data['n_pulses'])/np.max(input_data['freq']))/gl.bin_size + 20).astype(int) 
     input_data['trial_start_list'] = np.random.randint(0,input_data['all_joint_ang'].shape[0] - 2*input_data['trial_len_idx'],size=(input_data['n_trials'],))
     
@@ -720,9 +791,9 @@ def run_blocksize_amp_stim_exp(input_data):
             metrics.append(compute_kin_metrics(stim_exp_out,base_exp_out, input_data['hand_vel_PDs'], stim_start_idx, stim_end_idx, make_plots=False))
             size_list.append(blocksize)
             a_list.append(amp)
+            stim_chan_list.append(stim_exp_out[0])
     
-    
-    return metrics, size_list, a_list,stim_exp_out
+    return metrics, size_list, a_list,stim_exp_out,stim_chan_list
 
 
 
@@ -748,6 +819,7 @@ def run_single_location_exp(input_data):
 
     set_list = []
     a_list = []
+    stim_chan_list = []
     
     if('stim_chans_to_use' in input_data):
             input_data['n_sets'] = len(input_data['stim_chans_to_use'])
@@ -782,23 +854,136 @@ def run_single_location_exp(input_data):
                 good_chans = np.reshape(np.argwhere(ang_diff <= input_data['PD_tol']),(-1,))
                 temp_stim_chans = np.append(temp_stim_chans, np.random.choice(good_chans,size=input_data['n_stim_chans']-1,replace=False))
                 
-            # set electrode(s) as being used
-            input_data['stim_chan_mask'][temp_stim_chans] = 1
-        
+        # set electrode(s) as being used
+        input_data['stim_chan_mask'][temp_stim_chans] = 1
+            
         for amp in input_data['amp_list']:
             input_data['amp'] = amp
-            print(amp)
+            #print(amp)
             stim_exp_out=run_many_stim_trials(input_data)
             metrics.append(compute_kin_metrics(stim_exp_out, base_exp_out, input_data['hand_vel_PDs'], stim_start_idx, stim_end_idx, make_plots=False))
             set_list.append(temp_stim_chans)
             a_list.append(amp)
+            stim_chan_list.append(stim_exp_out[0])
     
     
     
-    return metrics, set_list, a_list, stim_exp_out
+    return metrics, set_list, a_list, stim_exp_out, stim_chan_list
 
 
+def run_amp_high_sim_repeat_exp(input_data):
+    n_neurons = input_data['map_data'].shape[0]
+   
+    stim_start_idx = np.round(input_data['stim_start_t']/gl.bin_size).astype(int)
+    stim_end_idx = stim_start_idx + np.ceil(input_data['n_pulses']/input_data['freq']/gl.bin_size).astype(int)
+    
+    metrics = []
+    a_list = []
+    step_list = []
+    stim_chan_list = []
+    set_list = []
+    input_data['trial_len_idx'] = np.ceil((input_data['stim_start_t'] + np.max(input_data['n_pulses'])/np.max(input_data['freq']))/gl.bin_size + 20).astype(int) 
+    input_data['trial_start_list'] = np.random.randint(0,input_data['all_joint_ang'].shape[0] - 2*input_data['trial_len_idx'],size=(input_data['n_trials'],))
+    
+    base_input_data = input_data
+    base_input_data['amp'] = 0
+    input_data['stim_chan_mask'] = np.ones_like(input_data['hand_vel_PDs'])
+    base_exp_out = run_many_stim_trials(base_input_data)
+    
+    good_chans = np.argwhere(input_data['sim_score'] < input_data['sim_tol']).reshape(-1,)
+    input_data['stim_chan_mask'] = np.zeros_like(input_data['hand_vel_PDs'])
+    input_data['stim_chan_mask'][good_chans] = 1
+    
+    # get channel sampling weight based on PD distribution
+    bin_counts, bin_edges = np.histogram(input_data['hand_vel_PDs'],bins=20,range=(-np.pi,np.pi))  
+    bin_idx = np.digitize(input_data['hand_vel_PDs'],bins=bin_edges)
+    bin_idx = bin_idx-1
+    
+    choice_p = 1/(bin_counts[bin_idx]/np.sum(bin_counts))        
+    choice_p[input_data['stim_chan_mask']==0] = 0
+    choice_p = choice_p/np.sum(choice_p)
+    
+    for i_set in range(input_data['n_sets']):
+        print(i_set)
+        input_data['stim_chan_mask'] = np.zeros_like(input_data['hand_vel_PDs'])
+        input_data['stim_chan_mask'][good_chans] = 1
+        resample_chans = 1
+        while resample_chans == 1: 
+            temp_stim_chans = np.array([np.random.choice(n_neurons,p=choice_p)])
+            temp_stim_chans = temp_stim_chans.astype(int)
+            
+            # if number of stim elecs is more than 1, choose electrodes with similar PDs
+            if(input_data['n_stim_chans']>1): # this only adds stimulation channels if doing multi-elec stim
+                ang_diff = np.abs(vae_utils.circular_diff(input_data['hand_vel_PDs'][temp_stim_chans],input_data['hand_vel_PDs']))
+                ang_diff[temp_stim_chans]=1000 # set current channel ang diff as absurdly large
+                ang_diff[input_data['stim_chan_mask']==0]=1000 # if not a useable channel, set ang diff as absurdly large
+                
+                # get a random channel that is sufficiently similar to the original (temp_stim_chans[0])
+                # sim scores in input_data['sim_mat'][temp_stim_chans[0],:]
+                s_chans = np.reshape(np.argwhere(ang_diff <= input_data['PD_tol']),(-1,))
+                
+                if(len(s_chans)>input_data['n_stim_chans']-1):
+                    temp_stim_chans = np.append(temp_stim_chans, np.random.choice(s_chans,size=input_data['n_stim_chans']-1,replace=False))
+                    resample_chans = 0
+                else:
+                    print(temp_stim_chans)
+                    print(np.sum(input_data['stim_chan_mask']))
+                    print(len(np.argwhere(choice_p > 0)))
+            else:
+                resample_chans=0
+                
 
+        # take a step from each electrode, get usable electrodes
+        for step in input_data['step_list']:
+            # get acceptable stim channels
+            good_locs = input_data['map_data'][temp_stim_chans,:]
+            # take a step of size step in random dir (N, E, S, W) from these good chans
+            use_locs = good_locs
+            
+            for i_loc in range(len(good_locs)):
+                i_dir = np.random.choice(4)
+                temp_loc = good_locs[i_loc,:]
+                if(i_dir==0): # N 
+                    if(temp_loc[1]-step >= 0):
+                        temp_loc[1] = temp_loc[1]-step
+                    else:
+                        temp_loc[1] = temp_loc[1]+step
+                if(i_dir==1): # E
+                    if(temp_loc[0]+step < np.sqrt(input_data['map_data'].shape[0])):
+                        temp_loc[0] = temp_loc[0]+step
+                    else:
+                        temp_loc[0] = temp_loc[0]-step
+                if(i_dir==2): # S
+                    if(temp_loc[1]+step < np.sqrt(input_data['map_data'].shape[0])):
+                        temp_loc[1] = temp_loc[1]+step
+                    else:
+                        temp_loc[1] = temp_loc[1]-step
+                if(i_dir==3): # W
+                    if(temp_loc[0]-step >= 0):
+                        temp_loc[0] = temp_loc[0]-step
+                    else:
+                        temp_loc[0] = temp_loc[0]+step
+                use_locs[i_loc] = temp_loc
+            
+    
+            use_chans = vae_utils.convert_loc_to_idx(np.transpose(use_locs),input_data['map_data'])
+            # update stim chan mask 
+            input_data['stim_chan_mask'] = np.zeros_like(input_data['hand_vel_PDs'])
+            input_data['stim_chan_mask'][use_chans.astype(int)] = 1
+            
+            if(len(use_chans) < len(temp_stim_chans)):
+                print("wtf")
+            
+            for amp in input_data['amp_list']:
+                input_data['amp'] = amp
+                stim_exp_out=run_many_stim_trials(input_data)
+                metrics.append(compute_kin_metrics(stim_exp_out,base_exp_out, input_data['hand_vel_PDs'], stim_start_idx, stim_end_idx, make_plots=False))
+                a_list.append(amp)
+                step_list.append(step)
+                stim_chan_list.append(stim_exp_out[0])
+                set_list.append(i_set)
+    
+    return metrics, a_list, step_list, stim_chan_list, set_list
 
 
 

@@ -20,7 +20,8 @@ import scipy as sp
 from sklearn.metrics.pairwise import cosine_similarity
 
 import seaborn as sns
- 
+import cmasher
+
 import pickle
 import datetime
 import torch
@@ -35,6 +36,7 @@ plt.rc('xtick', labelsize=14)    # fontsize of the tick labels
 plt.rc('ytick', labelsize=14)    # fontsize of the tick labels
 plt.rc('legend', fontsize=14)    # legend fontsize
 plt.rc('font', size=14)          # controls default text sizes
+
 #%% load in pretrained model and joint velocity data, both normalized and raw
 # get project folder, file with vae_params and training parameters
 project_folder = r'D:\Lab\Data\StimModel\models\Han_20160315_RW_2021-05-12-210801'
@@ -69,7 +71,18 @@ kin_var_norm = joint_vels_norm
 # load in vae weights
 vae = vae_utils.load_vae_parameters(fpath=path_to_model_dict,input_size=kin_var_norm.shape[1]) 
 
+#%% joint vel vaf
 
+kin_var_hat,rates = vae_utils.vae_forward(vae,kin_var_norm)
+
+kin_vaf = []
+kin_r2 = []
+for hand in range(kin_var_norm.shape[1]):
+    kin_vaf.append(mdl.vaf(kin_var_norm[:,hand],kin_var_hat[:,hand]))
+    kin_r2.append(np.corrcoef(kin_var_norm[:,hand],kin_var_hat[:,hand])[0,1]**2)
+print(kin_vaf)
+print(kin_r2)
+    
 #%% train linear decoder for this network from kin_var_norm to actual hand_vels
 #%% either train new decoder or load one in
 
@@ -84,24 +97,27 @@ else:
     f=open(project_folder + '\\hand_vel_dec.pkl','wb')
     pickle.dump(dec,f)
     f.close()
+ 
+# load a vae_decoder if we retrained it
+path_to_dec = glob.glob(project_folder + '\\*retrained_vae_dec*')
+if(len(path_to_dec)>0):
+    f=open(path_to_dec[0],'rb')
+    vae_dec = pickle.load(f)
+    f.close()
+    print("loaded retrained vae dec; use input_data['vae_dec']=vae_dec")
     
-    
+    # evaluate decoder by plotting joint velocities against actual joint vel
+    rates = vae_utils.vae_get_rates(vae, kin_var_norm,gl.bin_size)
+    kin_var_hat = vae_utils.linear_dec_forward(dec=vae_dec,x=rates)
+    hand_vels_hat = vae_utils.linear_dec_forward(dec=dec,x=kin_var_hat)
+    hand_vaf = []
+    hand_r2 = []
+    for hand in range(hand_vels.shape[1]):
+        hand_vaf.append(mdl.vaf(hand_vels[:,hand],hand_vels_hat[:,hand]))
+        hand_r2.append(np.corrcoef(hand_vels[:,hand],hand_vels_hat[:,hand])[0,1]**2)
+    print(hand_vaf)
+    print(hand_r2)
 
-# evaluate decoder by plotting joint velocities against actual joint vel
-hand_vels_hat = vae_utils.linear_dec_forward(dec=dec,x=kin_var_norm)
-hand_vaf = []
-
-for hand in range(hand_vels.shape[1]):
-    hand_vaf.append(mdl.vaf(hand_vels[:,hand],hand_vels_hat[:,hand]))
-print(hand_vaf)
-
-
-x = vae.state_dict()
-dec_weights = x['decoder.layer1.0.weight'].numpy()
-plt.figure()
-for i in range(2):
-    plt.subplot(1,2,i+1)
-    plt.hist(dec_weights[i,:])
 
 #%% get PD similarity matrix and correlation similarity matrix. This can take awhile (minutes)
 corr_sim_mat = vae_utils.get_correlation_similarity(vae,kin_var_norm)
@@ -118,35 +134,50 @@ else:
     f=open(project_folder + '\\PD_calc.pkl','wb')
     pickle.dump(hand_vel_PDs,f)
     f.close()
+
+#%% get multi-neuron hash PDs
     
+hash_PDs, hash_params, rates, hash_rates = vae_utils.get_hash_PDs(vae, kin_var_norm, hand_vels, mdl.locmap()*0.05) # locations in mm
+
+
+#%% compare hash PDs to single-unit PDs
+PD_diff = vae_utils.circular_diff(hash_PDs,hand_vel_PDs)*180/np.pi
+plt.figure()
+plt.hist(PD_diff,40)
 
 #%% visualize PDs
 mapping = mdl.locmap().astype(int)
+PD_bin_edges = np.linspace(-np.pi,np.pi,16)
 PD_map = vae_utils.convert_list_to_map(hand_vel_PDs.reshape(1,-1),mapping)
 PD_map = PD_map*180/np.pi
-PD_hist, PD_bin_edges = np.histogram(hand_vel_PDs)
+PD_hist, PD_bin_edges = np.histogram(hand_vel_PDs,bins=PD_bin_edges)
 
 PD_bin_centers = PD_bin_edges[0:-1] + np.mean(np.diff(PD_bin_edges))/2
+PD_hist= PD_hist/np.sum(PD_hist)
 
 plt.figure()
-plt.subplot(111,polar=True)
+ax=plt.subplot(111,polar=True)
 plt.bar(x=PD_bin_centers,
         height=PD_hist,
-        width=2*np.pi/len(PD_bin_centers))
+        width=2*np.pi/len(PD_bin_centers),
+        edgecolor='none',linewidth=0,color='#377eb8')
+        
 
+ax.set_ylim([0,0.15])
+ax.set_yticks([0,0.05,0.1,0.15])
+
+#1 =colors = '#e41a1c'   0 = colors = '#377eb8'   8 = colors = '#4daf4a'  26 = colors = '#65463E'
+x = PD_map[:,:,0]
+x[x<0] = x[x<0] + 360
 plt.figure()
-plt.imshow(PD_map[:,:,0],cmap='twilight',interpolation='none')
-plt.colorbar()
-#%% compare PD and hand-vel-decoder direction
-#%% ONLY MAKES SENSE IF VAE DECODES HAND VELS
-x = vae.state_dict()
-dec_weights = x['decoder.layer1.0.weight'].numpy()
+plt.imshow(x,cmap=cmasher.infinity,interpolation='none',vmin=0,vmax=360)
+cbar=plt.colorbar()
+cbar.set_label('Preferred Direction (Deg)')
+cbar.set_ticks(np.array([0,90,180,270,360])) 
+#cbar.ax.set_yticklabels(['360','270','180','90','0'])
 
-dec_dir = np.arctan2(dec_weights[1,:],dec_weights[0,:])
-
-plt.figure()
-plt.hist(vae_utils.circular_diff(dec_dir,hand_vel_PDs),20)
-
+plt.xlim([0,80])  # this manages to flip the map vertically....
+plt.ylim([0,80])
 
 #%% stimulate the same location(s) many times and measure effect
 input_data = {}
@@ -170,13 +201,13 @@ input_data['map_data'] = mdl.locmap()
 input_data['block_size'] = 0.05 # mm
 
 input_data['joint_vel'] = joint_vels
-input_data['n_trials'] = 250
+input_data['n_trials'] = 2
 input_data['n_stim_chans'] = 1 # please don't change to more, I'm not sure if it works....
 input_data['n_sets'] = 6
 
 input_data['PD_tol'] = np.pi/8
 
-single_loc_exp, loc_idx, amp, stim_exp_out = stim_exp_utils.run_single_location_exp(input_data)
+single_loc_exp, loc_idx, amp, stim_exp_out, stim_chan_list= stim_exp_utils.run_single_location_exp(input_data)
 
 exp_fname = 'single_loc_exp'
 
@@ -775,6 +806,7 @@ plt.figure()
 plt.hist(neigh_pd_diff)
 
 #%% run experiments for multiple amplitudes at different block sizes
+
 input_data = {}
 input_data['kin'] = 'hand';
 input_data['dec'] = dec
@@ -876,15 +908,18 @@ print(neigh_sim[good_idx.astype(int)])
 
 kin_var_samp = kin_var_norm[20:50] # use normalized joint velocity for vae, actual joint velocity for decoder and opensim
 
+#kin_var_samp = kin_var_norm[20,:].reshape((1,-1))
+#kin_var_use = np.tile(kin_var_samp,(30,1))
+
 input_data = {}
 
-input_data['stim_chan'] = np.array([2600])
-input_data['amp'] = 50 # uA
+input_data['stim_chan'] = np.array([2525]) # 2525 = good, 3262 = bad
+input_data['amp'] = 10 # uA
 input_data['freq'] = 200 # Hz
 input_data['n_pulses'] = 40 # s
 input_data['stim_start_t'] = gl.bin_size; # equivalent to 1 bin.
-input_data['dir_func'] = 'stoney'
-input_data['decay_prob'] = 1
+input_data['dir_func'] = 'bio_mdl'
+input_data['decay_prob'] = 0
 
 input_data['trans_func'] = 'none'
 input_data['vae'] = vae
@@ -893,6 +928,7 @@ input_data['joint_vel'] = kin_var_samp
 input_data['init_joint_ang'] = joint_angs[0]
 input_data['dec'] = dec
 input_data['kin'] = 'hand'
+input_data['vae_dec'] = vae_dec
 
 input_data['map_data'] = mdl.locmap()
 input_data['block_size'] = 0.05 # mm
@@ -905,23 +941,13 @@ no_stim_out = stim_exp_utils.run_stim_trial(input_data)
 no_stim_rates = no_stim_out[1]
 stim_rates = stim_out[1]
 is_act = stim_out[2]
+is_act_once = np.any(is_act,axis=1)
 
 point_kin_no = 100*no_stim_out[-1] # [hand_pos,hand_vel,hand_acc,elbow_pos,elbow_vel,elbow_acc]
 point_kin_stim = 100*stim_out[-1]
 no_stim_rates_map, stim_rates_map = vae_utils.visualize_activation_map(stim_rates, no_stim_rates, idx=1)
 
 #vae_utils.visualize_activation_dist(is_act, input_data['stim_chan'],input_data['block_size'])
-
-#%% plot hand vel during stimulation (stim and no stim)
-
-plt.subplot(1,2,1)
-plt.plot(point_kin_no[:,0],point_kin_stim[:,0],'.')
-plt.subplot(1,2,2)
-plt.plot(point_kin_no[:,1],point_kin_stim[:,1],'.')
-
-#%%
-
-mse = np.mean(np.square(point_kin_no-point_kin_stim),axis=0)
 
 #%% set global plot style
 sns.set_style('ticks') # darkgrid, white grid, dark, white and ticks
@@ -936,38 +962,140 @@ plt.figure(figsize=(5,5))
 ax=plt.axes()
 idx = 1
 
-plt.plot(point_kin_no[idx-1:idx+2,0],point_kin_no[idx-1:idx+2,1],color='black', marker='.',markersize=12, linewidth=2)  # no stim 
-plt.plot(point_kin_stim[idx-1:idx+2,0],point_kin_stim[idx-1:idx+2,1],color='tab:red', marker='.', markersize=12, linewidth=2) # stim
+plt.plot(point_kin_no[idx-1:idx+6,0],point_kin_no[idx-1:idx+6,1],color='black', marker='.',markersize=12, linewidth=2)  # no stim 
+plt.plot(point_kin_stim[idx-1:idx+6,0],point_kin_stim[idx-1:idx+6,1],color='tab:red', marker='.', markersize=12, linewidth=2) # stim
 
 sns.despine()
 
-plt.xlim([-12,4])
-plt.ylim([-4,12])
-plt.xticks(ticks=np.arange(-12,6,4))
-plt.yticks(ticks=np.arange(-4,14,4))
+#plt.xlim([-12,4])
+#plt.ylim([-4,12])
+#plt.xticks(ticks=np.arange(-12,6,4))
+#plt.yticks(ticks=np.arange(-4,14,4))
 ax.xaxis.set_minor_locator(MultipleLocator(1))
 ax.yaxis.set_minor_locator(MultipleLocator(1))
 
 plt.xlabel('X Hand-vel (cm/s)')     
 plt.ylabel('Y Hand-vel (cm/s)')
             
-#%%
-gl.rate_mult = 1
-rates = vae_utils.vae_get_rates(vae, kin_var_norm, gl.bin_size)
-samp_rates = vae_utils.sample_rates(rates)
+#%% use rates to get stim effect vector
+act_hand_vel_mag = np.linalg.norm(hand_vels,ord=2,axis=1)
+max_hand_vel_mag = np.percentile(act_hand_vel_mag,95)
 
-idx=0
+kin_var_no = vae_utils.vae_decoder(vae=input_data['vae'],samples=no_stim_rates,bin_size=gl.bin_size)
+kin_var_stim = vae_utils.vae_decoder(vae=input_data['vae'],samples=stim_rates,bin_size=gl.bin_size)
+        
+hand_vel_no = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_no)
+hand_vel_stim = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_stim)
 
-#%%
-plt.figure()
-plt.hist(samp_rates.reshape(-1,1),50)
-print(np.mean(samp_rates[:,idx]))
-print(np.square(np.std(samp_rates[:,idx])))
-print(np.square(np.std(samp_rates[:,idx]/gl.rate_mult)))
+stim_eff = np.mean(hand_vel_stim[1:5,:] - hand_vel_no[1:5,:],axis=0) # magnitude is meaningless here
 
+#%% plot contribution of each neuron to stim-effect vector
+
+act_hand_vel_mag = np.linalg.norm(hand_vels,ord=2,axis=1)
+max_hand_vel_mag = np.percentile(act_hand_vel_mag,100)
+
+stim_eff = np.zeros((6400,2))
+r=[]
+theta=[]
+theta_PD=[]
+x_data = []
+y_data = []
+fig = plt.figure(figsize=(4,4))
+ax=fig.gca()
+lims = 0.6
+# plot circle 
+ax.add_patch(plt.Circle((0,0),lims,color='black',fill=False))
+plt.plot([-lims,lims],[0,0],color='grey',linewidth=1)
+plt.plot([0,0],[-lims,lims],color='grey',linewidth=1)
+
+for i in range(6400):
+    if(is_act_once[i]==True):
+        no_rates_use = np.zeros_like(no_stim_rates)
+        no_rates_use[:,i] = no_stim_rates[:,i]
+        
+        stim_rates_use = np.zeros_like(stim_rates)
+        stim_rates_use[:,i] = stim_rates[:,i]
+                
+        kin_var_no = vae_utils.vae_decoder(vae=input_data['vae'],samples=no_rates_use,bin_size=gl.bin_size)
+        kin_var_stim = vae_utils.vae_decoder(vae=input_data['vae'],samples=stim_rates_use,bin_size=gl.bin_size)
+        
+        hand_vel_no = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_no)
+        hand_vel_stim = vae_utils.linear_dec_forward(dec=input_data['dec'],x=kin_var_stim)
+    
+        stim_eff[i,:] = np.mean(hand_vel_stim[1:5,:] - hand_vel_no[1:5,:],axis=0)
+    
+        x_data.append(stim_eff[i,0])
+        y_data.append(stim_eff[i,1])
+        theta.append(np.arctan2(stim_eff[i,1],stim_eff[i,0]))
+        r.append(100*np.sqrt(np.sum(np.square(stim_eff[i,:])))/max_hand_vel_mag)
+        theta_PD.append(hand_vel_PDs[i])
+            
+        #ax.plot(theta,r,color='black',alpha=random.uniform(0.25,1))
+        
+        plt.plot([0,r[-1]*np.cos(theta[-1])],[0,r[-1]*np.sin(theta[-1])], \
+                  linewidth=0.5, color='black')
+        #plt.arrow(0,0,r[-1]*np.cos(theta[-1]),r[-1]*np.sin(theta[-1]), \
+        #          width=0.005,head_width=0.02,head_length=0.035,edgecolor='none',facecolor='black')
+ 
+    
+ax.set_xticks(ticks=[])
+ax.set_yticks(ticks=[])
+plt.xlim([-lims,lims])
+plt.ylim([-lims,lims])
+ax.set_aspect('equal')
+
+
+
+bin_edges = np.linspace(-np.pi,np.pi,20)
+
+r_plot, bin_edges = np.histogram(theta,bin_edges,weights=r)
+
+bin_centers = bin_edges[0:-1] + np.mean(np.diff(bin_edges))/2
+
+plt.figure(figsize=(4,4))
+ax=plt.subplot(111,polar=True)
+plt.bar(x=bin_centers,
+        height=r_plot,
+        width=2*np.pi/len(bin_centers),
+        edgecolor='none',linewidth=0,color='#377eb8')
+        
+        
+ax.set_yticklabels(labels=[])
+ax.set_xticklabels(labels=[])
+ax.set_aspect('equal')
+ax.set_rlim([0,4])
+#ax.set_ylim([0,8])
+#ax.set_yticks([0,0.05,0.1,0.15])
+#%        
+        
 #%%
+
+
 
 """
+#%% retrain vae decoder and plot weights vs. PD
+
+rates = vae_utils.vae_get_rates(vae, kin_var_norm,gl.bin_size)
+
+dec_weights = vae.decoder.state_dict()['layer1.0.weight'].numpy()
+vae_dec_new = vae_utils.make_linear_decoder(x=rates, y=kin_var_norm, drop_rate=0.995,n_iters=2000,lr=0.001,init_weights=dec_weights)   
+hand_dec_weights = dec.state_dict()['layer1.0.weight'].numpy()
+whole_decoder_weights = np.matmul(np.transpose(vae_dec_new.state_dict()['layer1.0.weight'].numpy()),np.transpose(hand_dec_weights))
+whole_decoder_dir = np.arctan2(whole_decoder_weights[:,1],whole_decoder_weights[:,0])
+
+PD_err = vae_utils.circular_diff(whole_decoder_dir, hand_vel_PDs)
+    
+plt.figure()
+plt.hist(np.abs(PD_err)*180/np.pi,50)   
+
+weight_mag=np.sqrt(np.sum(np.square(whole_decoder_weights),axis=1))
+plt.figure()
+plt.plot(whole_decoder_dir, np.sqrt(np.sum(np.square(whole_decoder_weights),axis=1)),'.')
+
+# save retrained vae decoder
+f=open(project_folder + '\\retrained_vae_dec.pkl','wb')
+pickle.dump(vae_dec_new,f)
+f.close()
 # compare hand and joint decoders...
 
 # step 1 - compare hand vel decoded from normal rates
